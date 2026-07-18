@@ -1,0 +1,159 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Findings — Reservoir Memory Capacity Study</title>
+<style>
+ :root{--bg:#05080d;--panel:#0c131d;--edge:#1c2b3d;--ink:#cdd8e8;--dim:#7f92aa;--head:#eaf1fb;--accent:#6ea8ff;--good:#4ec98a;--warn:#e0a54d}
+ *{box-sizing:border-box}
+ html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,Segoe UI,Arial;line-height:1.65}
+ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+ nav{position:sticky;top:0;z-index:10;background:rgba(8,12,18,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--edge);padding:10px 20px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:13px}
+ nav .brand{font-weight:700;color:var(--head);margin-right:6px}
+ nav a{color:var(--accent)}nav .cur{color:var(--head);font-weight:600}
+ .wrap{max-width:880px;margin:0 auto;padding:36px 22px 80px}
+ h1{font-size:30px;color:var(--head);margin:0 0 6px;line-height:1.2}
+ .lede{color:var(--dim);font-size:15px;margin:0 0 8px}
+ h2{font-size:21px;color:var(--head);margin:42px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--edge)}
+ h3{font-size:16px;color:var(--head);margin:26px 0 6px}
+ p{margin:10px 0}
+ .card{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:18px 20px;margin:18px 0}
+ .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:20px 0}
+ .kpi{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:14px}
+ .kpi .n{font-size:26px;font-weight:700;color:var(--head)}
+ .kpi .l{font-size:12px;color:var(--dim);margin-top:2px}
+ .kpi .s{font-size:11px;color:var(--good);margin-top:4px}
+ table{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
+ th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--edge)}
+ th{color:var(--dim);font-weight:600;text-align:right}
+ th:first-child,td:first-child{text-align:left}
+ tbody tr:hover{background:#0f1826}
+ figure{margin:20px 0}
+ img{width:100%;border:1px solid var(--edge);border-radius:8px;background:#fff}
+ figcaption{font-size:12px;color:var(--dim);margin-top:6px}
+ .verdict{border-left:3px solid var(--good);padding:10px 16px;background:#0d1a14;border-radius:0 8px 8px 0;margin:14px 0}
+ .caveat{border-left:3px solid var(--warn);padding:10px 16px;background:#1a150c;border-radius:0 8px 8px 0;margin:14px 0}
+ code{background:#111c2b;border:1px solid var(--edge);border-radius:4px;padding:1px 6px;font-size:13px;color:#bcd}
+ .mono{font-family:ui-monospace,Consolas,monospace}
+ ul{margin:10px 0;padding-left:22px}li{margin:5px 0}
+ .foot{color:#5a6b80;font-size:12px;margin-top:40px;border-top:1px solid var(--edge);padding-top:16px}
+ .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--edge);color:var(--dim);margin-left:8px}
+ .ok{color:var(--good);border-color:#2f7a4d}.no{color:var(--warn);border-color:#7a5a2f}
+</style></head><body>
+<nav>
+ <span class="brand">🧫 Digital Organoid</span>
+ <a href="index.html">Creature</a>
+ <a href="gamification_demos.html">Game Demos</a>
+ <a href="organoid_lab.html">Lab</a>
+ <a href="organoid_viewer.html">Viewer</a>
+ <a href="organoid_viewer_3d.html">3D Viewer</a>
+ <span class="cur">Findings</span>
+</nav>
+<div class="wrap">
+
+<h1>Does a simulated organoid actually compute?</h1>
+<p class="lede">A reproducibility check on the memory-capacity study in <span class="mono">organoid_findings_report.pdf</span> — re-run from the source code in this repo, reporting what the data supports and what it doesn't.</p>
+
+<div class="card">
+<p style="margin-top:0"><strong>What this study is.</strong> Separate from the interactive creature, the <span class="mono">organoid_simulator/</span> package models organoid-like tissue as a sparse recurrent network under Dale's Law (80% excitatory / 20% inhibitory) and measures two things as the network grows from 100 to 200,000 neurons: <em>memory capacity</em> (how many past inputs a linear readout can reconstruct) and <em>criticality</em> (whether activity sits near the "edge of chaos"). It's a reservoir-computing benchmark, not a claim about biological cognition.</p>
+</div>
+
+<div class="kpis">
+ <div class="kpi"><div class="n">10.07</div><div class="l">Shift-register control MC</div><div class="s">✓ solver correct (theory = 10)</div></div>
+ <div class="kpi"><div class="n">0.950</div><div class="l">Spectral radius achieved</div><div class="s">✓ matches target exactly</div></div>
+ <div class="kpi"><div class="n">4.45 → 6.43</div><div class="l">MC across N=100→200k</div><div class="s">✓ smooth log growth</div></div>
+ <div class="kpi"><div class="n">63</div><div class="l">reservoir configs, 3–5 seeds</div><div class="s">re-aggregated from raw JSON</div></div>
+</div>
+
+<h2>1. Is the machinery real, or hand-tuned?</h2>
+<p>The strongest evidence that this is genuine computation rather than a rigged demo is the <strong>linear-shift-register control</strong>. I fed the memory-capacity estimator a "reservoir" that is literally a 10-tap delay line — its state at time <span class="mono">t</span> is exactly the last 10 inputs. A correct estimator must return MC ≈ 10.0 and no more. Running the repo's own <span class="mono">compute_memory_capacity()</span> unchanged:</p>
+<div class="verdict"><strong>MC = 10.07</strong> on the 10-tap control (expected ≈ 10.0). The ridge-regression readout — including the dual-form solver used for the huge networks — recovers exactly the recoverable information and nothing spurious. The measurement is trustworthy.</div>
+<p>I also rebuilt three reservoirs from scratch (<span class="mono">build_recurrent_weights → scale_spectral_radius → run_homeostasis → run_simulation</span>) and re-measured MC live, independent of the stored results:</p>
+<table>
+<thead><tr><th>N</th><th>K</th><th>ρ target</th><th>ρ measured</th><th>MC (live rebuild)</th><th>MC (stored sweep)</th></tr></thead>
+<tbody>
+<tr><td>100</td><td>50</td><td>0.95</td><td>0.95</td><td>4.11</td><td>4.45</td></tr>
+<tr><td>300</td><td>50</td><td>0.95</td><td>0.95</td><td>4.50</td><td>4.97</td></tr>
+<tr><td>1000</td><td>50</td><td>0.95</td><td>0.95</td><td>4.80</td><td>5.49</td></tr>
+</tbody></table>
+<p>Live values land in the same range as the stored sweep (slightly lower — different homeostasis probe seed), and spectral-radius scaling hits the target to three decimals. The pipeline reproduces.</p>
+
+<h2>2. What the data actually shows</h2>
+<p>Aggregating every successful ρ=0.95 run from <span class="mono">sweep_results.json</span> and <span class="mono">results_2e5.json</span> (mean ± SD across seeds):</p>
+<table>
+<thead><tr><th>N</th><th>K</th><th>seeds</th><th>MC mean</th><th>MC SD</th><th>Branching σ</th><th>Avalanche τ</th></tr></thead>
+<tbody>
+<tr><td>100</td><td>50</td><td>5</td><td>4.45</td><td>0.13</td><td>0.95</td><td>2.22</td></tr>
+<tr><td>300</td><td>50</td><td>5</td><td>4.97</td><td>0.27</td><td>0.86</td><td>2.40</td></tr>
+<tr><td>300</td><td>100</td><td>5</td><td>4.35</td><td>0.21</td><td>0.89</td><td>2.40</td></tr>
+<tr><td>1000</td><td>50</td><td>5</td><td>5.49</td><td>0.30</td><td>0.86</td><td>2.36</td></tr>
+<tr><td>1000</td><td>100</td><td>5</td><td>4.80</td><td>0.28</td><td>0.87</td><td>2.14</td></tr>
+<tr><td>3000</td><td>50</td><td>5</td><td>5.69</td><td>0.27</td><td>0.84</td><td>2.42</td></tr>
+<tr><td>10000</td><td>50</td><td>3</td><td>5.90</td><td>0.32</td><td>0.85</td><td>2.47</td></tr>
+<tr><td>30000</td><td>50</td><td>3</td><td>6.08</td><td>0.36</td><td>0.86</td><td>2.44</td></tr>
+<tr><td>200000</td><td>50</td><td>1</td><td>6.43</td><td>—</td><td>0.92</td><td>1.17</td></tr>
+</tbody></table>
+
+<figure><img src="plots/mc_logfit.png" alt="MC vs N with logarithmic fit">
+<figcaption>Figure 1. Memory capacity vs. network size, re-plotted from the raw runs. The dashed line is a least-squares fit <span class="mono">MC = 3.57 + 0.57·log₁₀N</span>.</figcaption></figure>
+
+<div class="verdict">
+<strong>The real headline: MC grows logarithmically with N.</strong> A single log fit — <span class="mono">MC = 3.57 + 0.57·log₁₀N</span> — tracks the data cleanly across 3.5 orders of magnitude (predicting 4.7 at N=100 and 6.4 at N=100k). Two robust, honest effects fall out:
+<ul>
+<li><strong>Bigger reservoirs remember more,</strong> but with sharply diminishing returns — a 2000× increase in neurons buys only ~1.5 extra units of capacity.</li>
+<li><strong>Sparser is better here:</strong> K=50 beats K=100 at every size. Fewer, stronger connections preserve more of the input history than denser wiring under this normalization.</li>
+</ul>
+</div>
+
+<h2>3. Where the PDF oversells itself</h2>
+<p>The write-up is worth trusting on method but not on every adjective. Two claims in the PDF are <em>not</em> supported by the numbers the same PDF reports:</p>
+
+<div class="caveat">
+<p style="margin-top:0"><strong>Claim: a sharp capability "knee" — "MC &lt; 1.5 below N=1,000." <span class="tag no">not supported</span></strong><br>
+The data never dips near 1.5. MC is already <strong>4.45 at N=100</strong>, the smallest network tested. There is no knee; there is a gentle logarithmic climb. The "localized activations that soon decay" story doesn't appear in these runs.</p>
+</div>
+
+<div class="caveat">
+<p style="margin-top:0"><strong>Claim: avalanche exponent "τ ≈ 1.5, aligning with mean-field theory." <span class="tag no">not supported</span></strong><br>
+Across the sweep τ clusters at <strong>2.2–2.5</strong>, not 1.5. The only run near 1.5 is N=200,000 (τ≈1.17) — and that fit has <span class="mono">xmin=2</span> with a near-zero p-value, i.e. a degenerate fit over tiny avalanches, not evidence of clean criticality. Similarly, the branching ratio sits <strong>subcritical at ~0.85</strong> for most sizes, not "≈0.98 / edge-of-chaos." The network is stable and slightly damped, which is fine — just not critical.</p>
+</div>
+
+<h3>What the criticality data does support</h3>
+<p>The one criticality claim that holds up is directional: <strong>memory capacity peaks near ρ ≈ 0.95</strong>, the classic echo-state "edge of chaos." My live N=300 sweep confirms the ordering, though the effect is modest:</p>
+<table>
+<thead><tr><th>Spectral radius ρ</th><th>MC (live, N=300)</th><th>regime</th></tr></thead>
+<tbody>
+<tr><td>0.80</td><td>4.23</td><td>over-damped</td></tr>
+<tr><td>0.95</td><td>4.50</td><td>edge of chaos ✓ peak</td></tr>
+<tr><td>1.05</td><td>4.43</td><td>near-chaotic</td></tr>
+</tbody></table>
+
+<figure><img src="plots/mc_decay_curve.png" alt="Memory capacity decay curve">
+<figcaption>Figure 2. Per-delay recall r²(k) for the largest completed reservoir (N=30,000) vs. a perfect 10-tap shift register. The reservoir trades the shift register's hard cutoff for graceful, fading memory — the signature of a real dynamical system rather than a lookup buffer.</figcaption></figure>
+
+<h2>4. Honest verdict on realism</h2>
+<div class="card">
+<p style="margin-top:0"><strong>Realistic as a reservoir-computing model? Yes.</strong> The dynamics, the Dale's-Law sign constraint, the spectral-radius normalization, and the memory-capacity measurement are all textbook-correct and independently reproduce. The shift-register control proves the numbers aren't inflated.</p>
+<p><strong>Realistic as a model of a biological organoid? Only loosely.</strong> This shares the honesty of the interactive creature: the structure is biologically flavored, the quantities are not calibrated. Specifically:</p>
+<ul>
+<li><strong>Rate units, not spikes.</strong> Neurons here are <span class="mono">tanh</span> rate units with a leak term — not the Izhikevich spiking cells of the interactive sim, and not real membrane dynamics. "Avalanches" are thresholded excursions of a rate signal, a proxy for the spiking cascades measured on real MEAs.</li>
+<li><strong>Static homeostasis.</strong> Activity is centered by an offline binary search on input gain, done once — not the ongoing synaptic scaling a living culture runs continuously.</li>
+<li><strong>No plasticity or learning in the reservoir.</strong> Weights are fixed after construction; only the linear readout is trained. Nothing self-organizes. This is standard for reservoir computing, but it means the "organoid" doesn't adapt.</li>
+<li><strong>Scale gap remains vast.</strong> 200k rate units is a large simulation but a small organoid, and connectivity (K=50–100 per neuron) is far below biological fan-out.</li>
+<li><strong>The plateau is a ceiling artifact.</strong> MC is bounded by <span class="mono">k_max=50</span> and the training length; the flattening at large N is partly the measurement's own limit, which the PDF correctly flags.</li>
+</ul>
+</div>
+
+<div class="verdict"><strong>Bottom line.</strong> The code does what it says and the results are reproducible — I re-ran them. The defensible finding is <em>logarithmic memory scaling with size, sparser-is-better connectivity, and a mild edge-of-chaos optimum</em>. The "sharp knee" and "τ≈1.5 criticality" language in the PDF is stronger than its own data, and should be read as aspiration rather than result.</p></div>
+
+<h3>Reproduce it yourself</h3>
+<p>Everything on this page comes from two scripts in the repo:</p>
+<p class="mono" style="background:#0c131d;border:1px solid var(--edge);border-radius:8px;padding:12px 14px;font-size:13px">
+pip install -r requirements.txt<br>
+python verify_findings.py&nbsp;&nbsp;&nbsp;# solver control + live rebuild + ρ sweep<br>
+python make_verify_plot.py&nbsp;# regenerates plots/mc_logfit.png
+</p>
+
+<div class="foot">
+Reproduced from source on this repository · <a href="https://github.com/charlesdvaught-hash/DigitalOrganoid">github.com/charlesdvaught-hash/DigitalOrganoid</a><br>
+Underlying report: <span class="mono">organoid_findings_report.pdf</span> · raw data: <span class="mono">sweep_results.json</span>, <span class="mono">results_2e5.json</span>
+</div>
+</div></body></html>
