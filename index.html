@@ -4,16 +4,23 @@
  #wrap{display:flex;flex-direction:column;height:100vh}
  header{padding:8px 16px;border-bottom:1px solid #16202e}
  h1{margin:0;font-size:15px;color:#eaf1fb}.sub{font-size:12px;color:#6a7c93;margin-top:2px}
- #main{flex:1;display:flex;min-height:0}
+#main{
+ flex:1;
+ display:flex;
+ min-height:0;
+ overflow:hidden;
+}
+
 #arena{
- flex:none;
- width:50%;
+ flex:1;
+ min-width:200px;
  display:block;
  background:#0a1018;
 }
 
 #splitter{
- width:6px;
+ width:8px;
+ flex:none;
  cursor:col-resize;
  background:#16202e;
  transition:background .15s;
@@ -25,10 +32,19 @@
 
 #brain{
  flex:1;
+ min-width:200px;
  display:block;
  background:radial-gradient(circle at 50% 40%,#0d1420,#05080d);
 }
- #panel{width:210px;padding:12px;border-left:1px solid #16202e;overflow-y:auto;font-size:12px}
+
+#panel{
+ width:210px;
+ flex:none;
+ padding:12px;
+ border-left:1px solid #16202e;
+ overflow-y:auto;
+ font-size:12px;
+}
  .lab{color:#7f92aa;display:flex;justify-content:space-between}.val{color:#eaf1fb;font-weight:600}
  input[type=range]{width:100%;margin:3px 0 8px}
  button{background:#1b2634;color:#cdd8e8;border:1px solid #2c3a4d;border-radius:6px;padding:7px;cursor:pointer;font-size:12px;width:100%;margin-top:6px}
@@ -218,8 +234,7 @@ $('newb').onclick=()=>{respawn(false);};
 $('respawn').onclick=()=>{respawn(true);};
 $('pause').onclick=e=>{playing=!playing;e.target.textContent=playing?'Pause':'Play';};
 A.addEventListener('click',ev=>{const r=A.getBoundingClientRect();food.push([(ev.clientX-r.left)/A.width,(ev.clientY-r.top)/A.height]);});
-// draggable arena/brain divider
-const splitter=document.getElementById('splitter');
+// draggable arena/brain dividerconst splitter=document.getElementById('splitter');
 const main=document.getElementById('main');
 const arena=document.getElementById('arena');
 
@@ -241,10 +256,17 @@ window.addEventListener('mousemove',e=>{
   const rect=main.getBoundingClientRect();
   let x=e.clientX-rect.left;
 
-  // keep usable minimum sizes
-  x=Math.max(150,Math.min(rect.width-350,x));
+  const panel=210;
+  const splitterWidth=8;
 
+  x=Math.max(
+    200,
+    Math.min(rect.width-panel-splitterWidth-200,x)
+  );
+
+  arena.style.flex='none';
   arena.style.width=x+'px';
+
   resize();
 });
 resize();updSyn();build();seedFood(6);frame();
