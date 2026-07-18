@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.DS_Store
+sweep_results.json
+sweep_checkpoints.json
+test_checkpoints.json
+plots/
+organoid_findings_report.pdf
+run.log

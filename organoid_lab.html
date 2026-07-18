@@ -1,0 +1,163 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Digital Organoid Lab</title>
+<style>
+ html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 35%,#0d1420,#05080d);color:#cdd8e8;font-family:system-ui,Segoe UI,Arial;overflow:hidden}
+ #wrap{display:flex;flex-direction:column;height:100vh}
+ header{padding:9px 16px;border-bottom:1px solid #16202e}
+ h1{margin:0;font-size:15px;color:#eaf1fb}.sub{font-size:12px;color:#6a7c93;margin-top:2px}
+ #main{flex:1;display:flex;min-height:0}
+ #cv{flex:1;display:block;cursor:crosshair}
+ #panel{width:240px;padding:14px;border-left:1px solid #16202e;overflow-y:auto;font-size:12px}
+ .grp{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #131c28}
+ .lab{color:#7f92aa;display:flex;justify-content:space-between}.val{color:#eaf1fb;font-weight:600}
+ input[type=range]{width:100%;margin:4px 0 2px}
+ button{background:#1b2634;color:#cdd8e8;border:1px solid #2c3a4d;border-radius:6px;padding:7px 10px;cursor:pointer;font-size:12px;width:100%;margin-top:6px}
+ button:hover{background:#243244}.on{background:#245c3a;border-color:#2f7a4d}.on:hover{background:#2b6e46}
+ .vit{display:flex;justify-content:space-between;margin:3px 0}.vk{color:#7f92aa}.vv{color:#eaf1fb;font-weight:600}
+ .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+ .hint{color:#5a6b80;font-size:11px;line-height:1.5;margin-top:4px}
+ footer{padding:8px 16px;border-top:1px solid #16202e}#trace{display:block;width:100%;height:48px}
+</style></head><body><div id="sitenav" style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:10px;align-items:center"><a href="gamification_demos.html" style="color:#6ea8ff;text-decoration:none">Game Demos</a><span style="color:#2c3a4d">|</span><a href="index.html" style="color:#6ea8ff;text-decoration:none">Creature</a><span style="color:#2c3a4d">|</span><a href="organoid_creature.html" style="color:#6ea8ff;text-decoration:none">Creature v0</a><span style="color:#2c3a4d">|</span><span style="color:#eaf1fb;font-weight:600">Lab</span><span style="color:#2c3a4d">|</span><a href="organoid_viewer.html" style="color:#6ea8ff;text-decoration:none">Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer_3d.html" style="color:#6ea8ff;text-decoration:none">3D Viewer</a></div><div id="wrap">
+<header><h1>🧫 Digital Organoid Lab</h1><div class="sub">A living digital brain organoid — grow it, drive it, watch it self-organize. Click the blob to stimulate.</div></header>
+<div id="main">
+ <canvas id="cv"></canvas>
+ <div id="panel">
+  <div class="grp">
+   <div class="lab">Neurons <span class="val" id="vN">800</span></div>
+   <input type="range" id="N" min="200" max="1600" step="100" value="800">
+   <div class="lab">Inhibitory % <span class="val" id="vI">20%</span></div>
+   <input type="range" id="I" min="0" max="50" step="5" value="20">
+   <div class="lab">Excitability <span class="val" id="vG">1.00</span></div>
+   <input type="range" id="G" min="20" max="180" step="5" value="100">
+   <div class="lab">Input drive <span class="val" id="vD">0.30</span></div>
+   <input type="range" id="D" min="0" max="100" step="5" value="30">
+   <button id="rebuild">🌱 Grow new organoid</button>
+  </div>
+  <div class="grp">
+   <button id="dale">Inhibition: cosmetic (tanh)</button>
+   <button id="dev">Development: OFF</button>
+   <div class="hint">Development = activity-dependent plasticity: co-firing neurons strengthen, weak synapses prune. Watch the wiring reorganize.</div>
+  </div>
+  <div class="grp">
+   <div style="color:#7f92aa;margin-bottom:6px">Vitals</div>
+   <div class="vit"><span class="vk">Mean activity</span><span class="vv" id="mAct">0.00</span></div>
+   <div class="vit"><span class="vk">Active now</span><span class="vv" id="mActive">0</span></div>
+   <div class="vit"><span class="vk">Branching σ</span><span class="vv" id="mSig">0.00</span></div>
+   <div class="vit"><span class="vk">Synapses</span><span class="vv" id="mSyn">0</span></div>
+   <div class="hint"><span class="dot" style="background:#5aa8ff"></span>excitatory &nbsp; <span class="dot" style="background:#ff8a63"></span>inhibitory</div>
+  </div>
+  <div class="grp" style="border:none">
+   <div class="lab">Spin <span class="val" id="vS">3</span></div>
+   <input type="range" id="S" min="0" max="10" step="1" value="3">
+   <button id="pause">Pause</button>
+  </div>
+ </div>
+</div>
+<footer><canvas id="trace"></canvas></footer>
+</div>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),tr=document.getElementById('trace'),tx=tr.getContext('2d');
+let N,frac_i,px,py,pz,types,inc,x,theta=0.4;
+let excit=1.0,drive=0.30,spin=3,playing=true,dale=false,dev=false,poke=null;
+let popHist=[],sigEMA=0;
+function rnd(){return Math.random()}
+function build(n,fi){
+ N=n;frac_i=fi;px=new Float32Array(N);py=new Float32Array(N);pz=new Float32Array(N);
+ types=new Int8Array(N);x=new Float32Array(N);
+ for(let i=0;i<N;i++){ // uniform in unit ball
+   let a,b,c,d2;do{a=rnd()*2-1;b=rnd()*2-1;c=rnd()*2-1;d2=a*a+b*b+c*c}while(d2>1);
+   px[i]=a;py[i]=b;pz[i]=c;types[i]=(rnd()<fi)?-1:1;
+ }
+ const K=12;inc=[];for(let i=0;i<N;i++)inc.push([]);
+ for(let j=0;j<N;j++){ // outgoing from j -> nearest K targets (distance-based), Dale sign of j
+   let ds=[];for(let k=0;k<N;k++){if(k===j)continue;const dx=px[j]-px[k],dy=py[j]-py[k],dz=pz[j]-pz[k];ds.push([dx*dx+dy*dy+dz*dz,k]);}
+   ds.sort((a,b)=>a[0]-b[0]);
+   for(let m=0;m<K;m++){const tgt=ds[m][1];const w=Math.abs(gauss())*types[j];inc[tgt].push([j,w]);}
+ }
+ normalize();updateSyn();
+}
+function gauss(){let u=0,v=0;while(u===0)u=rnd();while(v===0)v=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(6.283*v);}
+function normalize(){ // scale incoming so recurrent drive is bounded
+ for(let i=0;i<N;i++){let s=0;for(const e of inc[i])s+=Math.abs(e[1]);if(s>0){const g=1.4/s;for(const e of inc[i])e[1]*=g;}}
+}
+let synCount=0;
+function updateSyn(){synCount=0;for(let i=0;i<N;i++)synCount+=inc[i].length;document.getElementById('mSyn').textContent=synCount;}
+function step(){
+ const nx=new Float32Array(N),a=0.3;
+ for(let i=0;i<N;i++){
+   let d=0;const li=inc[i];for(let m=0;m<li.length;m++)d+=li[m][1]*x[li[m][0]];
+   d=d*excit+drive*(rnd()*2-1);
+   if(poke&&poke.set.has(i))d+=2.5;
+   let f=Math.tanh(d);if(dale)f=Math.max(0,f);
+   nx[i]=(1-a)*x[i]+a*f;
+ }
+ x=nx;if(poke){poke.t--;if(poke.t<=0)poke=null;}
+ if(dev)plastic();
+}
+let devTick=0;
+function plastic(){ // simple Hebbian + prune + sprout, every few steps
+ devTick++;if(devTick%4)return;
+ for(let i=0;i<N;i++){const li=inc[i];
+   for(let m=0;m<li.length;m++){const src=li[m][0];const dw=0.02*x[i]*x[src]*types[src];li[m][1]+=dw;
+     // clamp magnitude sign to Dale (sign follows source type)
+     if(types[src]>0&&li[m][1]<0)li[m][1]=0.0001;if(types[src]<0&&li[m][1]>0)li[m][1]=-0.0001;}
+ }
+ // prune weakest ~ and sprout among co-active neighbors occasionally
+ if(devTick%40===0){
+   for(let i=0;i<N;i++){const li=inc[i];
+     for(let m=li.length-1;m>=0;m--){if(Math.abs(li[m][1])<0.01){li.splice(m,1);}}
+     if(x[i]>0.4&&li.length<20){ // sprout from a random co-active-ish source
+       const src=(Math.random()*N)|0;if(src!==i){li.push([src,Math.abs(gauss())*0.05*types[src]]);}
+     }
+   }
+   normalize();updateSyn();
+ }
+}
+function resize(){cv.width=cv.clientWidth;cv.height=cv.clientHeight;tr.width=tr.clientWidth;tr.height=48;}
+addEventListener('resize',resize);
+let sx=new Float32Array(0),sy=new Float32Array(0),rz=new Float32Array(0);
+function render(){
+ const w=cv.width,h=cv.height,cx=w/2,cy=h/2,S=Math.min(w,h)*0.40,d=3.2;ctx.clearRect(0,0,w,h);
+ if(sx.length!==N){sx=new Float32Array(N);sy=new Float32Array(N);rz=new Float32Array(N);}
+ const ct=Math.cos(theta),st=Math.sin(theta);
+ for(let i=0;i<N;i++){const xr=px[i]*ct+pz[i]*st,zr=-px[i]*st+pz[i]*ct;rz[i]=zr;const f=d/(d-zr);sx[i]=cx+xr*S*f;sy[i]=cy+py[i]*S*f;}
+ let ord=[...Array(N).keys()].sort((p,q)=>rz[p]-rz[q]);
+ let mAct=0,nAct=0;
+ for(const i of ord){const v=Math.min(1,Math.abs(x[i]));mAct+=v;if(v>0.3)nAct++;
+   const depth=(rz[i]+1)/2,r=(1.0+v*3.2)*(d/(d-rz[i])),al=(0.12+v*0.85)*(0.45+0.55*depth);
+   if(types[i]>0)ctx.fillStyle='rgba('+(70+v*120|0)+','+(150+v*105|0)+',255,'+al+')';
+   else ctx.fillStyle='rgba(255,'+(120-v*40|0)+','+(70+v*30|0)+','+al+')';
+   ctx.beginPath();ctx.arc(sx[i],sy[i],r,0,6.283);ctx.fill();}
+ mAct/=N;
+ // vitals + branching proxy
+ popHist.push(nAct);if(popHist.length>300)popHist.shift();
+ if(popHist.length>2){const a0=popHist[popHist.length-2],a1=popHist[popHist.length-1];if(a0>0){sigEMA=0.98*sigEMA+0.02*(a1/a0);}}
+ document.getElementById('mAct').textContent=mAct.toFixed(2);
+ document.getElementById('mActive').textContent=nAct;
+ document.getElementById('mSig').textContent=sigEMA.toFixed(2);
+ drawTrace();
+}
+function drawTrace(){const w=tr.width,h=tr.height,mx=Math.max(1,...popHist);tx.clearRect(0,0,w,h);
+ tx.strokeStyle='#5aa8ff';tx.lineWidth=1.1;tx.beginPath();
+ for(let f=0;f<popHist.length;f++){const X=f/300*w,Y=h-2-(popHist[f]/mx)*(h-6);f?tx.lineTo(X,Y):tx.moveTo(X,Y);}tx.stroke();
+ tx.fillStyle='#5a6b80';tx.font='10px system-ui';tx.fillText('population activity',6,12);}
+function loop(){theta+=spin*0.0016;if(playing){step();}render();requestAnimationFrame(loop);}
+// controls
+const $=id=>document.getElementById(id);
+$('N').oninput=e=>{$('vN').textContent=e.target.value;};
+$('N').onchange=e=>{build(+e.target.value,frac_i);};
+$('I').oninput=e=>{frac_i=+e.target.value/100;$('vI').textContent=e.target.value+'%';};
+$('I').onchange=e=>{build(N,+e.target.value/100);};
+$('G').oninput=e=>{excit=+e.target.value/100;$('vG').textContent=excit.toFixed(2);};
+$('D').oninput=e=>{drive=+e.target.value/100;$('vD').textContent=drive.toFixed(2);};
+$('S').oninput=e=>{spin=+e.target.value;$('vS').textContent=e.target.value;};
+$('rebuild').onclick=()=>{build(N,frac_i);popHist=[];};
+$('dale').onclick=e=>{dale=!dale;e.target.textContent=dale?'Inhibition: FUNCTIONAL (Dale)':'Inhibition: cosmetic (tanh)';e.target.className=dale?'on':'';};
+$('dev').onclick=e=>{dev=!dev;e.target.textContent=dev?'Development: ON 🌱':'Development: OFF';e.target.className=dev?'on':'';};
+$('pause').onclick=e=>{playing=!playing;e.target.textContent=playing?'Pause':'Play';};
+cv.addEventListener('click',ev=>{ // stimulate nearest neurons to click
+ const r=cv.getBoundingClientRect(),mx=ev.clientX-r.left,my=ev.clientY-r.top;const set=new Set();
+ for(let i=0;i<N;i++){const dx=sx[i]-mx,dy=sy[i]-my;if(dx*dx+dy*dy<900)set.add(i);}
+ poke={set,t:6};
+});
+resize();build(800,0.2);loop();
+</script></body></html>

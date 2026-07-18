@@ -1,6 +1,5 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>Organoid Creature</title>
-<style> .navlink{float:right;font-size:12px;color:#6ea8ff;text-decoration:none;border:1px solid #2c3a4d;border-radius:6px;padding:4px 10px;margin-left:10px}.navlink:hover{background:#1b2634}
-
+<style>
  html,body{margin:0;height:100%;background:#05080d;color:#cdd8e8;font-family:system-ui,Segoe UI,Arial;overflow:hidden}
  #wrap{display:flex;flex-direction:column;height:100vh}
  header{padding:8px 16px;border-bottom:1px solid #16202e}
@@ -56,8 +55,8 @@
  .leg{font-size:11px;margin:2px 0}.d{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
  .collapsible {transition: max-height 0.25s ease-out; overflow: hidden; max-height: 1000px;}
  .collapsible.closed {max-height: 0 !important; margin: 0; padding: 0; border: none;}
-</style></head><body><div id="wrap">
-<header><a class="navlink" href="gamification_demos.html">Gamification Demos →</a><h1>🧫🐛 Organoid Creature — embodied closed loop</h1>
+</style></head><body><div id="sitenav" style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:10px;align-items:center"><a href="gamification_demos.html" style="color:#6ea8ff;text-decoration:none">Game Demos</a><span style="color:#2c3a4d">|</span><span style="color:#eaf1fb;font-weight:600">Creature</span><span style="color:#2c3a4d">|</span><a href="organoid_creature.html" style="color:#6ea8ff;text-decoration:none">Creature v0</a><span style="color:#2c3a4d">|</span><a href="organoid_lab.html" style="color:#6ea8ff;text-decoration:none">Lab</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer.html" style="color:#6ea8ff;text-decoration:none">Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer_3d.html" style="color:#6ea8ff;text-decoration:none">3D Viewer</a></div><div id="wrap">
+<header><h1>🧫🐛 Organoid Creature — embodied closed loop</h1>
 <div class="sub">The creature's eyes drive sensor neurons; motor neurons steer it. The organoid IS the brain. Click the arena to drop food.</div></header>
 <div id="main">
  <canvas id="arena"></canvas>
