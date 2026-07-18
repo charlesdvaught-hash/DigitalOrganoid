@@ -883,7 +883,7 @@ function updateMeaStatistics() {
 }
 
 // ---- creature / arena ----
-let cx = 0.5, cy = 0.5, head = 0, score = 0, food = [];
+let cx = 0.5, cy = 0.5, head = 0, headVel = 0, score = 0, food = [];
 let energyVal = 100, alive = true, survival = 0, best = 0, tStart = performance.now();
 
 function seedFood(n) {
@@ -891,24 +891,33 @@ function seedFood(n) {
   for (let i = 0; i < n; i++) food.push([Math.random() * 0.9 + 0.05, Math.random() * 0.9 + 0.05]);
 }
 
+// Two chemosensory "antennae" aimed +/- THETA_OFF off the heading. Each integrates a
+// smooth smell field summed over ALL food sources (not just the nearest), with a graded
+// distance falloff (no hard cutoff) and an overlapping cosine receptive field — so food
+// dead-ahead drives BOTH sensors, and the L/R difference is a continuous gradient signal
+// rather than a one-side-or-the-other switch. A little receptor noise is added.
+const THETA_OFF = 0.6;   // ~34deg half-separation between the two antennae
+const SMELL_SCALE = 0.35; // spatial scale of the odor gradient
 function sensors() {
-  let bestDist = 1e9, bi = -1;
-  for (let i = 0; i < food.length; i++) {
-    const dx = food[i][0] - cx, dy = food[i][1] - cy, d = dx * dx + dy * dy;
-    if (d < bestDist) {
-      bestDist = d;
-      bi = i;
-    }
-  }
   let L = 0, R = 0;
-  if (bi >= 0) {
-    const dx = food[bi][0] - cx, dy = food[bi][1] - cy;
+  for (let i = 0; i < food.length; i++) {
+    const dx = food[i][0] - cx, dy = food[i][1] - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    // graded intensity, inverse-square-ish, always > 0, never a hard edge
+    const r = dist / SMELL_SCALE;
+    const intensity = 1 / (1 + r * r);
     const ang = Math.atan2(dy, dx) - head;
     const a = Math.atan2(Math.sin(ang), Math.cos(ang));
-    const prox = Math.max(0, 1 - Math.sqrt(bestDist) / 0.5);
-    if (a > 0) L = prox * (1 + Math.cos(a)); else R = prox * (1 + Math.cos(a));
-    L = Math.min(1, L); R = Math.min(1, R);
+    // overlapping cosine receptive fields for the left / right antennae
+    L += intensity * Math.max(0, Math.cos(a - THETA_OFF));
+    R += intensity * Math.max(0, Math.cos(a + THETA_OFF));
   }
+  // soft saturation keeps drive bounded while staying smooth
+  L = 1 - Math.exp(-L);
+  R = 1 - Math.exp(-R);
+  // biological receptors are noisy
+  L = Math.min(1, Math.max(0, L + (Math.random() - 0.5) * 0.04));
+  R = Math.min(1, Math.max(0, R + (Math.random() - 0.5) * 0.04));
   const wall = Math.max(0, 1 - Math.min(cx, cy, 1 - cx, 1 - cy) / 0.15);
   return [L, R, wall];
 }
@@ -936,7 +945,15 @@ function loopStep() {
 
   const mL = poolMean('mL'), mR = poolMean('mR');
   const speed = 0.0028 + 0.006 * (mL + mR) / 2 * Mg;
-  head += (mL - mR) * 0.9 * Mg + (W > 0.3 ? 0.05 : 0);
+  // Proportional wall avoidance: steer toward the arena centre, scaled by how close the
+  // nearest wall is (W), instead of a fixed one-directional kick past a threshold.
+  const toCenter = Math.atan2(0.5 - cy, 0.5 - cx);
+  const dhWall = Math.atan2(Math.sin(toCenter - head), Math.cos(toCenter - head));
+  const turnCmd = (mL - mR) * 0.9 * Mg + dhWall * W * 0.3;
+  // Heading inertia: low-pass the turn command so motion is smooth and momentum-like
+  // rather than instantaneous — the body can't snap to a new heading in one tick.
+  headVel = headVel * 0.75 + turnCmd * 0.25;
+  head += headVel;
   cx += Math.cos(head) * speed; cy += Math.sin(head) * speed;
   cx = Math.min(0.97, Math.max(0.03, cx)); cy = Math.min(0.97, Math.max(0.03, cy));
 
@@ -970,7 +987,7 @@ function loopStep() {
 
 function respawn(sameBrain) {
   if (!sameBrain) build();
-  cx = 0.5; cy = 0.5; head = Math.random() * 6.28; energyVal = 100; alive = true; score = 0;
+  cx = 0.5; cy = 0.5; head = Math.random() * 6.28; headVel = 0; energyVal = 100; alive = true; score = 0;
   tStart = performance.now(); survival = 0; seedFood(6);
 }
 
