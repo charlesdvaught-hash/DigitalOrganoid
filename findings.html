@@ -37,6 +37,18 @@
  .foot{color:#5a6b80;font-size:12px;margin-top:40px;border-top:1px solid var(--edge);padding-top:16px}
  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--edge);color:var(--dim);margin-left:8px}
  .ok{color:var(--good);border-color:#2f7a4d}.no{color:var(--warn);border-color:#7a5a2f}
+ .srcbtn{background:#132132;color:var(--head);border:1px solid var(--edge);border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer;margin:4px 8px 4px 0}
+ .srcbtn:hover{background:#1b2c42;border-color:var(--accent)}
+ #overlay{display:none;position:fixed;inset:0;z-index:100;background:rgba(3,6,10,.82);backdrop-filter:blur(4px);padding:3vh 3vw}
+ #overlay.on{display:flex;flex-direction:column}
+ #modalhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+ #modaltitle{color:var(--head);font-size:15px;font-weight:600}
+ #modalclose{background:#1b2634;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:14px}
+ #modalclose:hover{background:#243244;border-color:var(--accent)}
+ #modalbody{flex:1;min-height:0;background:#0c131d;border:1px solid var(--edge);border-radius:10px;overflow:auto}
+ #modalbody iframe{width:100%;height:100%;border:0;background:#525659}
+ #modalbody pre{margin:0;padding:16px;font-size:12px;line-height:1.5;color:#bcd;white-space:pre-wrap;word-break:break-word}
+ .dllink{color:var(--accent);font-size:12px}
 </style></head><body>
 <nav>
  <span class="brand">🧫 Digital Organoid</span>
@@ -144,6 +156,14 @@ Across the sweep τ clusters at <strong>2.2–2.5</strong>, not 1.5. The only ru
 
 <div class="verdict"><strong>Bottom line.</strong> The code does what it says and the results are reproducible — I re-ran them. The defensible finding is <em>logarithmic memory scaling with size, sparser-is-better connectivity, and a mild edge-of-chaos optimum</em>. The "sharp knee" and "τ≈1.5 criticality" language in the PDF is stronger than its own data, and should be read as aspiration rather than result.</p></div>
 
+<h3>Source materials</h3>
+<p>View the primary documents without leaving the page:</p>
+<p>
+ <button class="srcbtn" onclick="openModal('pdf')">📄 Full PDF report</button>
+ <button class="srcbtn" onclick="openModal('sweep')">🗂 sweep_results.json</button>
+ <button class="srcbtn" onclick="openModal('big')">🗂 results_2e5.json</button>
+</p>
+
 <h3>Reproduce it yourself</h3>
 <p>Everything on this page comes from two scripts in the repo:</p>
 <p class="mono" style="background:#0c131d;border:1px solid var(--edge);border-radius:8px;padding:12px 14px;font-size:13px">
@@ -156,4 +176,41 @@ python make_verify_plot.py&nbsp;# regenerates plots/mc_logfit.png
 Reproduced from source on this repository · <a href="https://github.com/charlesdvaught-hash/DigitalOrganoid">github.com/charlesdvaught-hash/DigitalOrganoid</a><br>
 Underlying report: <span class="mono">organoid_findings_report.pdf</span> · raw data: <span class="mono">sweep_results.json</span>, <span class="mono">results_2e5.json</span>
 </div>
-</div></body></html>
+</div>
+
+<div id="overlay" onclick="if(event.target===this)closeModal()">
+ <div id="modalhead">
+  <span id="modaltitle"></span>
+  <span><a id="modaldl" class="dllink" href="#" target="_blank" rel="noopener">Open in new tab ↗</a>
+  &nbsp;&nbsp;<button id="modalclose" onclick="closeModal()">✕ Close</button></span>
+ </div>
+ <div id="modalbody"></div>
+</div>
+
+<script>
+const SRC={
+ pdf:{title:'organoid_findings_report.pdf',url:'organoid_findings_report.pdf',type:'pdf'},
+ sweep:{title:'sweep_results.json',url:'sweep_results.json',type:'json'},
+ big:{title:'results_2e5.json',url:'results_2e5.json',type:'json'}
+};
+const ov=document.getElementById('overlay'),body=document.getElementById('modalbody'),
+ ttl=document.getElementById('modaltitle'),dl=document.getElementById('modaldl');
+function openModal(key){
+ const s=SRC[key]; ttl.textContent=s.title; dl.href=s.url;
+ body.innerHTML='<pre>Loading…</pre>';
+ if(s.type==='pdf'){
+  body.innerHTML='<iframe src="'+s.url+'#view=FitH" title="'+s.title+'"></iframe>';
+ } else {
+  fetch(s.url).then(r=>r.text()).then(t=>{
+   let out=t;
+   try{out=JSON.stringify(JSON.parse(t),null,2);}catch(e){}
+   const pre=document.createElement('pre'); pre.textContent=out;
+   body.innerHTML=''; body.appendChild(pre);
+  }).catch(e=>{body.innerHTML='<pre>Could not load '+s.url+' — '+e+'</pre>';});
+ }
+ ov.classList.add('on'); document.body.style.overflow='hidden';
+}
+function closeModal(){ov.classList.remove('on');body.innerHTML='';document.body.style.overflow='';}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+</script>
+</body></html>
