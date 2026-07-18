@@ -1,0 +1,1180 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Organoid Creature</title>
+<style>
+ html,body{margin:0;height:100%;background:#05080d;color:#cdd8e8;font-family:system-ui,Segoe UI,Arial;overflow:hidden}
+ #wrap{display:flex;flex-direction:column;height:100vh}
+ header{padding:8px 16px;border-bottom:1px solid #16202e}
+ h1{margin:0;font-size:15px;color:#eaf1fb}.sub{font-size:12px;color:#6a7c93;margin-top:2px}
+#main{
+ flex:1;
+ display:flex;
+ min-height:0;
+ overflow:hidden;
+}
+
+#arena{
+ flex:1;
+ min-width:200px;
+ display:block;
+ background:#0a1018;
+}
+
+#splitter{
+ width:8px;
+ flex:none;
+ cursor:col-resize;
+ background:#16202e;
+ transition:background .15s;
+}
+
+#splitter:hover{
+ background:#3a506b;
+}
+
+#brain{
+ flex:1;
+ min-width:200px;
+ display:block;
+ background:radial-gradient(circle at 50% 40%,#0d1420,#05080d);
+}
+
+#panel{
+ width:240px;
+ flex:none;
+ padding:12px;
+ border-left:1px solid #16202e;
+ overflow-y:auto;
+ font-size:12px;
+}
+ .lab{color:#7f92aa;display:flex;justify-content:space-between;margin-top:4px;font-size:11px;}
+ .val{color:#eaf1fb;font-weight:600}
+ input[type=range]{width:100%;margin:2px 0 6px}
+ button{background:#1b2634;color:#cdd8e8;border:1px solid #2c3a4d;border-radius:6px;padding:6px;cursor:pointer;font-size:12px;width:100%;margin-top:5px}
+ button:hover{background:#243244}.on{background:#245c3a;border-color:#2f7a4d}
+ .vit{display:flex;justify-content:space-between;margin:3px 0}.vk{color:#7f92aa}.vv{color:#eaf1fb;font-weight:600}
+ .hint{color:#5a6b80;font-size:11px;line-height:1.4;margin-top:8px}
+ .leg{font-size:11px;margin:2px 0}.d{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+ .collapsible {transition: max-height 0.25s ease-out; overflow: hidden; max-height: 1000px;}
+ .collapsible.closed {max-height: 0 !important; margin: 0; padding: 0; border: none;}
+</style></head><body><div id="wrap">
+<header><h1>🧫🐛 Organoid Creature — embodied closed loop</h1>
+<div class="sub">The creature's eyes drive sensor neurons; motor neurons steer it. The organoid IS the brain. Click the arena to drop food.</div></header>
+<div id="main">
+ <canvas id="arena"></canvas>
+ <div id="splitter"></div>
+ <canvas id="brain"></canvas>
+ <div id="panel">
+  <button id="toggleControls" style="margin-bottom: 8px;">Hide Sliders & Modifiers</button>
+
+  <div id="controls-section" class="collapsible">
+   <div class="lab">Neurons <span class="val" id="vN">600</span></div><input type="range" id="N" min="200" max="3000" step="100" value="600">
+   <div class="lab">Connectivity <span class="val" id="vK">10</span></div><input type="range" id="K" min="4" max="64" step="2" value="10">
+   <div class="lab">Inhibitory % <span class="val" id="vI">20%</span></div><input type="range" id="I" min="0" max="50" step="5" value="20">
+   <div class="lab">Excitability <span class="val" id="vG">1.00</span></div><input type="range" id="G" min="20" max="180" value="100">
+   <div class="lab">Sensor gain <span class="val" id="vSg">1.5</span></div><input type="range" id="Sg" min="0" max="40" value="15">
+   <div class="lab">Motor gain <span class="val" id="vMg">1.0</span></div><input type="range" id="Mg" min="0" max="40" value="10">
+   <div class="lab">Base Noise <span class="val" id="vD">0.01</span></div><input type="range" id="D" min="0" max="100" value="10">
+
+   <div class="lab">Dev Stage <span class="val" id="vDevStage">0.20</span></div><input type="range" id="DevStage" min="0" max="100" value="20">
+   <div class="lab">Self-Org Strength <span class="val" id="vSelfOrg">1.0</span></div><input type="range" id="SelfOrg" min="0" max="20" value="10">
+   <div class="lab">Homeostasis <span class="val" id="vHomeo">1.0</span></div><input type="range" id="Homeo" min="0" max="20" value="10">
+   <div class="lab">Long-range Prob <span class="val" id="vLongRange">0.10</span></div><input type="range" id="LongRange" min="0" max="50" value="10">
+   <div class="lab">Met Recovery <span class="val" id="vMetRec">1.0</span></div><input type="range" id="MetRec" min="1" max="20" value="10">
+   <div class="lab">Rewiring Rate <span class="val" id="vRewire">1.0</span></div><input type="range" id="Rewire" min="0" max="20" value="10">
+
+   <div style="margin-top:10px; border-top:1px solid #16202e; padding-top:6px;">
+    <div style="font-weight:600; color:#8aa0bb; margin-bottom:4px;">Conditions & Modifiers</div>
+    <label style="display:flex; align-items:center; margin-bottom:3px; cursor:pointer;"><input type="checkbox" id="modCortical" style="margin-right:6px;"> Cortical Org</label>
+    <label style="display:flex; align-items:center; margin-bottom:3px; cursor:pointer;"><input type="checkbox" id="modDishBrain" style="margin-right:6px;"> DishBrain Learning</label>
+    <label style="display:flex; align-items:center; margin-bottom:3px; cursor:pointer;"><input type="checkbox" id="modBursting" style="margin-right:6px;"> Bursting Culture</label>
+    <label style="display:flex; align-items:center; margin-bottom:3px; cursor:pointer;"><input type="checkbox" id="modSelfOrg" style="margin-right:6px;"> High Self-Org</label>
+    <label style="display:flex; align-items:center; margin-bottom:3px; cursor:pointer;"><input type="checkbox" id="modStress" style="margin-right:6px;"> Metabolic Stress</label>
+   </div>
+  </div>
+
+  <div style="margin-top:8px; border-top:1px solid #16202e; padding-top:6px;">
+   <button id="dale" class="on">Inhibition: FUNCTIONAL (Dale)</button>
+   <button id="dev">Development: OFF</button>
+   <button id="reward" class="">Reward on feeding: OFF</button>
+   <button id="newb">🌱 New brain</button>
+   <button id="respawn">🔄 Respawn (same brain)</button>
+   <button id="pause">Pause</button>
+  </div>
+
+  <div style="margin-top:10px; border-top:1px solid #16202e; padding-top:6px;">
+   <div class="lab" style="font-weight:600; color:#8aa0bb; margin-bottom:4px;">MEA Readout (8x8 Grid)</div>
+   <canvas id="mea" width="216" height="216" style="background:#04070c; border:1px solid #16202e; border-radius:4px; display:block; margin:4px auto 6px;"></canvas>
+   <div class="vit"><span class="vk">MEA Spike Rate</span><span class="vv" id="meaSpikes">0.0 Hz</span></div>
+   <div class="vit"><span class="vk">MEA Bursts</span><span class="vv" id="meaBursts">0</span></div>
+   <div class="vit"><span class="vk">MEA Synchrony</span><span class="vv" id="meaSync">0.00</span></div>
+  </div>
+
+  <div style="margin-top:10px; border-top:1px solid #16202e; padding-top:6px;">
+   <div style="color:#7f92aa; font-weight:600; margin-bottom:4px;">Vitals</div>
+   <div class="vit"><span class="vk">Survival time</span><span class="vv" id="surv">0.0s</span></div>
+   <div class="vit"><span class="vk">Best survival</span><span class="vv" id="best">0.0s</span></div>
+   <div class="vit"><span class="vk">Energy</span><span class="vv" id="nrg">100</span></div>
+   <div class="vit"><span class="vk">Food eaten</span><span class="vv" id="score">0</span></div>
+   <div class="vit"><span class="vk">Mean activity</span><span class="vv" id="mAct">0.00</span></div>
+   <div class="vit"><span class="vk">Active now</span><span class="vv" id="mActive">0</span></div>
+   <div class="vit"><span class="vk">Branching σ</span><span class="vv" id="mSig">0.00</span></div>
+   <div class="vit"><span class="vk">Estimated synapses</span><span class="vv" id="mSyn">6000</span></div>
+   <div class="vit"><span class="vk">L / R motor</span><span class="vv" id="mLR">0 / 0</span></div>
+  </div>
+
+  <div style="margin-top:10px; border-top:1px solid #16202e; padding-top:6px;">
+   <div class="leg"><span class="d" style="background:#37e0c8"></span>sensor neurons</div>
+   <div class="leg"><span class="d" style="background:#ffd24d"></span>motor neurons</div>
+   <div class="leg"><span class="d" style="background:#5aa8ff"></span>excitatory · <span class="d" style="background:#ff8a63"></span>inhibitory</div>
+  </div>
+  <div class="hint">Development stage, conditions, and spatial forces drive self-organization. Enable "Development: ON" and "Reward on feeding" for DishBrain learning!</div>
+ </div>
+</div></div>
+<script>
+// Canvas handles
+const A = document.getElementById('arena'), ac = A.getContext('2d');
+const B = document.getElementById('brain'), bc = B.getContext('2d');
+const M = document.getElementById('mea'), mc = M.getContext('2d');
+
+// Simulation state variables
+let N = 600, K = 10, fi = 0.2;
+let px, py, pz, vx, vy, vz, types, subtypes, morphogen;
+let v, u, a_param, b_param, c_param, d_param;
+let energy, fatigue, tracePre, tracePost, smoothedActivity, firingRate, calciumActivity, spikeCount;
+let inc = []; // Synapse lists: inc[i] is an array of incoming synapses: { pre: index, weight: float, activity: float, age: float, isReflex: bool }
+let dopamine = 0.0;
+let excit = 1.0;
+let baseNoise = 0.01;
+let dev = false, dale = true, reward = false, playing = true;
+let popHist = [], sigEMA = 0;
+let theta = 0.4; // 3D brain rotation angle
+
+// Subtypes constants
+const SUBTYPE_RS = 0;   // Regular Spiking Excitatory
+const SUBTYPE_IB = 1;   // Intrinsically Bursting Excitatory
+const SUBTYPE_FS = 2;   // Fast Spiking Inhibitory
+const SUBTYPE_LTS = 3;  // Low-Threshold Spiking Inhibitory
+
+// Pools definition
+let pool = { sL: [0, 30], sR: [30, 60], sW: [60, 90], mL: [90, 140], mR: [140, 190] };
+function inPool(i) {
+  for (const k in pool) {
+    if (i >= pool[k][0] && i < pool[k][1]) return k;
+  }
+  return null;
+}
+
+// Gaussian generator
+function gauss() {
+  let u = 0, v = 0;
+  while (!u) u = Math.random();
+  while (!v) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(6.283 * v);
+}
+
+// Sliders / Controls
+const $ = id => document.getElementById(id);
+function getDevStage() { return +$('DevStage').value / 100; }
+function getSelfOrgStrength() { return +$('SelfOrg').value / 10; }
+function getHomeoStrength() { return +$('Homeo').value / 10; }
+function getLongRangeProb() { return +$('LongRange').value / 100; }
+function getMetRecoveryRate() { return +$('MetRec').value / 10; }
+function getRewireRate() { return +$('Rewire').value / 10; }
+
+// Modifiers Checkboxes
+function isCortical() { return $('modCortical').checked; }
+function isDishBrain() { return $('modDishBrain').checked; }
+function isBursting() { return $('modBursting').checked; }
+function isHighSelfOrg() { return $('modSelfOrg').checked; }
+function isStress() { return $('modStress').checked; }
+
+// Setup dynamic checkbox callbacks to refresh sliders/parameters
+function onModifierChange() {
+}
+['modCortical', 'modDishBrain', 'modBursting', 'modSelfOrg', 'modStress'].forEach(id => {
+  $(id).onchange = onModifierChange;
+});
+
+// Setup slider value updates
+$('G').oninput = e => { excit = +e.target.value / 100; $('vG').textContent = excit.toFixed(2); };
+$('Sg').oninput = e => $('vSg').textContent = (+e.target.value / 10).toFixed(1);
+$('Mg').oninput = e => $('vMg').textContent = (+e.target.value / 10).toFixed(1);
+$('D').oninput = e => { baseNoise = +e.target.value / 100; $('vD').textContent = baseNoise.toFixed(2); };
+$('N').oninput = e => $('vN').textContent = e.target.value;
+$('N').onchange = e => { N = +e.target.value; updSyn(); respawn(false); };
+$('K').oninput = e => { $('vK').textContent = e.target.value; };
+$('K').onchange = e => { K = +e.target.value; updSyn(); respawn(false); };
+$('I').oninput = e => { fi = +e.target.value / 100; $('vI').textContent = e.target.value + '%'; };
+$('I').onchange = () => respawn(false);
+
+$('DevStage').oninput = e => $('vDevStage').textContent = (+e.target.value / 100).toFixed(2);
+$('SelfOrg').oninput = e => $('vSelfOrg').textContent = (+e.target.value / 10).toFixed(1);
+$('Homeo').oninput = e => $('vHomeo').textContent = (+e.target.value / 10).toFixed(1);
+$('LongRange').oninput = e => $('vLongRange').textContent = (+e.target.value / 100).toFixed(2);
+$('MetRec').oninput = e => $('vMetRec').textContent = (+e.target.value / 10).toFixed(1);
+$('Rewire').oninput = e => $('vRewire').textContent = (+e.target.value / 10).toFixed(1);
+
+function updSyn() {
+  let count = 0;
+  for (let i = 0; i < N; i++) {
+    if (inc[i]) count += inc[i].length;
+  }
+  $('mSyn').textContent = count.toLocaleString();
+}
+
+// Building the Brain
+function build() {
+  px = new Float32Array(N); py = new Float32Array(N); pz = new Float32Array(N);
+  vx = new Float32Array(N); vy = new Float32Array(N); vz = new Float32Array(N);
+  types = new Int8Array(N);
+  subtypes = new Int8Array(N);
+  morphogen = new Float32Array(N);
+  sensorInj = new Float32Array(N);
+  outDirty = true;
+
+  v = new Float32Array(N);
+  u = new Float32Array(N);
+  a_param = new Float32Array(N);
+  b_param = new Float32Array(N);
+  c_param = new Float32Array(N);
+  d_param = new Float32Array(N);
+
+  energy = new Float32Array(N);
+  fatigue = new Float32Array(N);
+  tracePre = new Float32Array(N);
+  tracePost = new Float32Array(N);
+  smoothedActivity = new Float32Array(N);
+  firingRate = new Float32Array(N);
+  calciumActivity = new Float32Array(N);
+  spikeCount = new Int32Array(N);
+
+  // Initialize neuron traits and Izhikevich params
+  for (let i = 0; i < N; i++) {
+    let a, b, c, d2;
+    do {
+      a = Math.random() * 2 - 1;
+      b = Math.random() * 2 - 1;
+      c = Math.random() * 2 - 1;
+      d2 = a * a + b * b + c * c;
+    } while (d2 > 1);
+    px[i] = a; py[i] = b; pz[i] = c;
+
+    types[i] = Math.random() < fi ? -1 : 1;
+    morphogen[i] = Math.random();
+
+    energy[i] = 1.0;
+    fatigue[i] = 0.0;
+  }
+
+  for (const k in pool) {
+    for (let i = pool[k][0]; i < pool[k][1]; i++) {
+      types[i] = 1;
+    }
+  }
+
+  for (let i = 0; i < N; i++) {
+    let base_a, base_b, base_c, base_d;
+    if (types[i] > 0) {
+      if (Math.random() < 0.85) {
+        subtypes[i] = SUBTYPE_RS;
+        base_a = 0.02; base_b = 0.2; base_c = -65; base_d = 8;
+      } else {
+        subtypes[i] = SUBTYPE_IB;
+        base_a = 0.02; base_b = 0.2; base_c = -50; base_d = 2;
+      }
+    } else {
+      if (Math.random() < 0.80) {
+        subtypes[i] = SUBTYPE_FS;
+        base_a = 0.1; base_b = 0.2; base_c = -65; base_d = 2;
+      } else {
+        subtypes[i] = SUBTYPE_LTS;
+        base_a = 0.02; base_b = 0.25; base_c = -65; base_d = 2;
+      }
+    }
+
+    const rVar = () => (Math.random() * 2 - 1);
+    a_param[i] = base_a * (1.0 + rVar() * 0.08);
+    b_param[i] = base_b * (1.0 + rVar() * 0.08);
+    c_param[i] = base_c + rVar() * 2.0;
+    d_param[i] = base_d * (1.0 + rVar() * 0.08);
+
+    v[i] = c_param[i];
+    u[i] = b_param[i] * v[i];
+  }
+
+  inc = [];
+  for (let i = 0; i < N; i++) inc.push([]);
+
+  const longRangeP = getLongRangeProb();
+  const decayScale = isCortical() ? 0.3 : 0.6;
+
+  for (let j = 0; j < N; j++) {
+    let ds = [];
+    for (let k = 0; k < N; k++) {
+      if (k === j) continue;
+      const dx = px[j] - px[k], dy = py[j] - py[k], dz = pz[j] - pz[k];
+      const dist2 = dx * dx + dy * dy + dz * dz;
+      ds.push([dist2, k]);
+    }
+    ds.sort((a, b) => a[0] - b[0]);
+
+    let connectionsFound = 0;
+    let idx = 0;
+    while (connectionsFound < K && idx < ds.length) {
+      const neighbor = ds[idx][1];
+      const dist2 = ds[idx][0];
+
+      let prob = Math.exp(-dist2 / decayScale);
+      if (Math.random() < longRangeP) prob = 1.0;
+
+      if (Math.random() < prob) {
+        const initialWeight = Math.abs(gauss()) * types[neighbor] * 0.8;
+        inc[j].push({
+          pre: neighbor,
+          weight: initialWeight,
+          activity: 0.5,
+          age: 0,
+          isReflex: false
+        });
+        connectionsFound++;
+      }
+      idx++;
+    }
+  }
+
+  norm();
+
+  const link = (sp, mp, wt) => {
+    for (let t = pool[mp][0]; t < pool[mp][1]; t++) {
+      for (let s = pool[sp][0]; s < pool[sp][1]; s += 3) {
+        inc[t].push({
+          pre: s,
+          weight: wt * types[s],
+          activity: 1.0,
+          age: 500,
+          isReflex: true
+        });
+      }
+    }
+  };
+  link('sL', 'mL', 0.6);
+  link('sR', 'mR', 0.6);
+  link('sW', 'mL', 0.4); link('sW', 'mR', 0.4);
+
+  updSyn();
+}
+
+function norm() {
+  for (let i = 0; i < N; i++) {
+    let s = 0;
+    for (const e of inc[i]) s += Math.abs(e.weight);
+    if (s > 0) {
+      const targetG = isCortical() ? 1.8 : 1.4;
+      const g = targetG / s;
+      for (const e of inc[i]) e.weight *= g;
+    }
+  }
+}
+
+// Step Spiking Neuron Dynamics (Izhikevich)
+let sensorInj = new Float32Array(600); // resized to N in build()
+let stepCount = 0;
+
+// Outgoing-synapse adjacency index (for O(1) STDP depression lookups).
+// out[i] = list of { post, syn } for every non-reflex synapse fed by neuron i.
+let out = [];
+let outDirty = true;
+function rebuildOutgoing() {
+  out = [];
+  for (let i = 0; i < N; i++) out.push([]);
+  for (let i = 0; i < N; i++) {
+    const synapses = inc[i];
+    for (let m = 0; m < synapses.length; m++) {
+      const syn = synapses[m];
+      if (syn.isReflex) continue;
+      out[syn.pre].push({ post: i, syn: syn });
+    }
+  }
+  outDirty = false;
+}
+
+// STDP, Homeostatic scaling, and plasticity params
+const traceDecay = 0.96;
+const A_plus = 0.008;
+const A_minus = 0.010;
+const W_max = 2.5;
+
+function stepBrain() {
+  stepCount++;
+
+  const stage = getDevStage();
+  const metRecovery = getMetRecoveryRate();
+  const baseNoiseVal = baseNoise;
+
+  let devNoise = (1.0 - stage) * 0.015;
+  let stressNoise = isStress() ? 0.02 : 0.00;
+  let burstNoise = isBursting() ? 0.06 : 0.00;
+  let noiseScale = baseNoiseVal + devNoise + stressNoise + burstNoise;
+
+  const recoveryRate = isStress() ? metRecovery * 0.4 : metRecovery;
+
+  dopamine *= 0.985;
+
+  let activeCount = 0;
+  let totalSpikesInTick = 0;
+
+  const spikedThisTick = [];
+
+  for (let i = 0; i < N; i++) {
+    tracePre[i] *= traceDecay;
+    tracePost[i] *= traceDecay;
+  }
+
+  for (let i = 0; i < N; i++) {
+    energy[i] += (1.0 - energy[i]) * 0.001 * recoveryRate;
+    fatigue[i] *= 0.98;
+
+    const excitability = energy[i] * (1.0 - fatigue[i] * 0.5);
+
+    let I_syn = 0;
+    const synapses = inc[i];
+    for (let m = 0; m < synapses.length; m++) {
+      const syn = synapses[m];
+      // Dale ON (functional): inhibitory neurons actually inhibit (signed weight).
+      // Dale OFF (cosmetic): inhibition is non-functional — all input treated as
+      // excitatory magnitude, so inhibitory cells only differ by color.
+      I_syn += (dale ? syn.weight : Math.abs(syn.weight)) * smoothedActivity[syn.pre];
+      syn.age += 1;
+    }
+
+    let I_effective = I_syn * excitability;
+
+    if (sensorInj[i]) {
+      I_effective += sensorInj[i] * excitability;
+    }
+
+    let I_noise = gauss() * noiseScale;
+    if (Math.random() < 0.002 * (1.0 - stage + (isBursting() ? 3 : 0))) {
+      I_noise += 15.0;
+    }
+
+    let I = I_effective * excit + I_noise;
+
+    let vi = v[i];
+    let ui = u[i];
+    const ai = a_param[i];
+    const bi = b_param[i];
+
+    if (fatigue[i] > 0.6) {
+      I *= (1.0 - (fatigue[i] - 0.6) * 0.5);
+    }
+
+    for (let step = 0; step < 2; step++) {
+      vi += 0.5 * (0.04 * vi * vi + 5 * vi + 140 - ui + I);
+      ui += 0.5 * ai * (bi * vi - ui);
+    }
+
+    if (vi > 35) vi = 35;
+    if (vi < -90) vi = -90;
+    v[i] = vi;
+    u[i] = ui;
+
+    let isSpike = 0;
+    if (v[i] >= 30) {
+      isSpike = 1;
+      v[i] = c_param[i];
+      u[i] += d_param[i];
+
+      energy[i] = Math.max(0, energy[i] - 0.002);
+      fatigue[i] = Math.min(1.0, fatigue[i] + 0.05);
+
+      spikeCount[i]++;
+      totalSpikesInTick++;
+
+      spikedThisTick.push(i);
+    }
+
+    smoothedActivity[i] = smoothedActivity[i] * 0.8 + isSpike * 0.2;
+    firingRate[i] = firingRate[i] * 0.99 + isSpike * 0.01;
+    calciumActivity[i] = calciumActivity[i] * 0.98 + isSpike * 0.02;
+
+    if (smoothedActivity[i] > 0.1) activeCount++;
+  }
+
+  // STDP Updates
+  if (dev && spikedThisTick.length > 0) {
+    if (outDirty) rebuildOutgoing();
+    const dishBrainMod = isDishBrain() ? 2.5 : 1.0;
+    const stressMod = isStress() ? 0.3 : 1.0;
+    const dopaMultiplier = reward ? (0.1 + dopamine * 4.0 * dishBrainMod) : 1.0;
+
+    for (let s = 0; s < spikedThisTick.length; s++) {
+      const idx = spikedThisTick[s];
+      tracePre[idx] += 1.0;
+      tracePost[idx] += 1.0;
+
+      const synapses = inc[idx];
+      for (let m = 0; m < synapses.length; m++) {
+        const syn = synapses[m];
+        if (syn.isReflex) continue;
+
+        const preIdx = syn.pre;
+        const preEnergy = energy[preIdx];
+        const postEnergy = energy[idx];
+        const localEnergyFactor = Math.min(preEnergy, postEnergy);
+
+        let dw = A_plus * tracePre[preIdx] * localEnergyFactor * dopaMultiplier * stressMod;
+
+        if (types[preIdx] > 0) {
+          syn.weight += dw;
+          if (syn.weight > W_max) syn.weight = W_max;
+          if (syn.weight < 0) syn.weight = 0;
+        } else {
+          syn.weight -= dw;
+          if (syn.weight < -W_max) syn.weight = -W_max;
+          if (syn.weight > 0) syn.weight = 0;
+        }
+
+        syn.activity = syn.activity * 0.95 + 0.05;
+      }
+
+      // Depression: neurons downstream of idx (idx spiked = pre). Direct lookup
+      // via the outgoing-adjacency index instead of scanning all N neurons.
+      const outgoing = out[idx];
+      for (let m = 0; m < outgoing.length; m++) {
+        const targetIdx = outgoing[m].post;
+        const syn = outgoing[m].syn;
+
+        const preEnergy = energy[idx];
+        const postEnergy = energy[targetIdx];
+        const localEnergyFactor = Math.min(preEnergy, postEnergy);
+
+        let dw = A_minus * tracePost[targetIdx] * localEnergyFactor * dopaMultiplier * stressMod;
+
+        if (types[idx] > 0) {
+          syn.weight -= dw;
+          if (syn.weight < 0) syn.weight = 0;
+        } else {
+          syn.weight += dw;
+          if (syn.weight > 0) syn.weight = 0;
+        }
+      }
+    }
+  }
+
+  // Homeostatic Plasticity (Synaptic Scaling)
+  if (stepCount % 500 === 0) {
+    const homeoStrength = getHomeoStrength();
+    const targetFiringRate = 0.02;
+
+    for (let i = 0; i < N; i++) {
+      const currentRate = firingRate[i];
+      const synapses = inc[i];
+      for (let m = 0; m < synapses.length; m++) {
+        const syn = synapses[m];
+        if (syn.isReflex) continue;
+
+        let scalingFactor = 1.0;
+        if (currentRate < targetFiringRate) {
+          scalingFactor = 1.0 + 0.05 * homeoStrength;
+        } else if (currentRate > targetFiringRate) {
+          scalingFactor = Math.max(0.7, 1.0 - 0.05 * homeoStrength);
+        }
+
+        syn.weight *= scalingFactor;
+
+        if (types[syn.pre] > 0) {
+          if (syn.weight > W_max) syn.weight = W_max;
+          if (syn.weight < 0) syn.weight = 0;
+        } else {
+          if (syn.weight < -W_max) syn.weight = -W_max;
+          if (syn.weight > 0) syn.weight = 0;
+        }
+      }
+    }
+
+    if (Math.random() < 0.2) {
+      norm();
+    }
+  }
+
+  // Pruning
+  if (dev && stepCount % 120 === 0) {
+    const stage = getDevStage();
+    const devPruneScale = 1.0 - stage * 0.7;
+
+    for (let i = 0; i < N; i++) {
+      const synapses = inc[i];
+      for (let m = synapses.length - 1; m >= 0; m--) {
+        const syn = synapses[m];
+        if (syn.isReflex) continue;
+
+        syn.activity *= 0.99;
+
+        let localPruneFactor = 1.0;
+        if (energy[i] < 0.4) {
+          localPruneFactor = 2.5;
+        }
+
+        const isWeak = Math.abs(syn.weight) < 0.015;
+        const isUnused = (syn.activity < 0.1 && syn.age > 400);
+
+        if (syn.activity > 0.4) continue;
+
+        if ((isWeak || isUnused) && Math.random() < 0.15 * devPruneScale * localPruneFactor) {
+          synapses.splice(m, 1);
+          outDirty = true;
+        }
+      }
+    }
+  }
+
+  // Update MEA Grid stats
+  recordMeaSpikes(spikedThisTick);
+
+  return { activeCount, totalSpikesInTick };
+}
+
+// Self-Organization & Morphogen Diffusion
+function stepSelfOrganization() {
+  const stage = getDevStage();
+  const selfOrgMult = getSelfOrgStrength() * (isHighSelfOrg() ? 2.2 : 1.0);
+
+  const devPhaseFactor = (1.0 - stage);
+  const movementForceScale = 0.005 * selfOrgMult * devPhaseFactor;
+
+  if (movementForceScale <= 0) return;
+
+  if (stepCount % 12 === 0) {
+    const newMorphogen = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      let neighborSum = morphogen[i];
+      let neighborCount = 1;
+
+      const synapses = inc[i];
+      for (let m = 0; m < synapses.length; m++) {
+        const preIdx = synapses[m].pre;
+        neighborSum += morphogen[preIdx];
+        neighborCount++;
+      }
+
+      newMorphogen[i] = neighborSum / neighborCount;
+    }
+    morphogen = newMorphogen;
+  }
+
+  for (let i = 0; i < N; i++) {
+    let fx = 0, fy = 0, fz = 0;
+
+    const synapses = inc[i];
+    for (let m = 0; m < synapses.length; m++) {
+      const syn = synapses[m];
+      const j = syn.pre;
+
+      const dx = px[j] - px[i];
+      const dy = py[j] - py[i];
+      const dz = pz[j] - pz[i];
+      const dist2 = dx * dx + dy * dy + dz * dz;
+      const dist = Math.sqrt(dist2) || 0.001;
+
+      const correlation = smoothedActivity[i] * smoothedActivity[j];
+      const attractionForce = correlation * 0.4;
+
+      const typeSimilarity = (types[i] === types[j]) ? 0.08 : 0.01;
+
+      const morphogenSimilarity = 1.0 - Math.abs(morphogen[i] - morphogen[j]);
+      const morphogenForce = morphogenSimilarity * 0.12;
+
+      const totalAttraction = attractionForce + typeSimilarity + morphogenForce;
+
+      fx += (dx / dist) * totalAttraction;
+      fy += (dy / dist) * totalAttraction;
+      fz += (dz / dist) * totalAttraction;
+    }
+
+    for (let r = 0; r < 5; r++) {
+      const j = Math.floor(Math.random() * N);
+      if (j === i) continue;
+
+      const dx = px[j] - px[i];
+      const dy = py[j] - py[i];
+      const dz = pz[j] - pz[i];
+      const dist2 = dx * dx + dy * dy + dz * dz;
+
+      if (dist2 < 0.16) {
+        const dist = Math.sqrt(dist2) || 0.001;
+        const repulsionForce = 0.05 / (dist2 + 0.001);
+        fx -= (dx / dist) * repulsionForce;
+        fy -= (dy / dist) * repulsionForce;
+        fz -= (dz / dist) * repulsionForce;
+      }
+    }
+
+    const driftStrength = 0.01 * (1.0 - stage);
+    fx += (Math.random() * 2 - 1) * driftStrength;
+    fy += (Math.random() * 2 - 1) * driftStrength;
+    fz += (Math.random() * 2 - 1) * driftStrength;
+
+    vx[i] = vx[i] * 0.7 + fx * movementForceScale;
+    vy[i] = vy[i] * 0.7 + fy * movementForceScale;
+    vz[i] = vz[i] * 0.7 + fz * movementForceScale;
+
+    px[i] += vx[i];
+    py[i] += vy[i];
+    pz[i] += vz[i];
+
+    const normDist2 = px[i]*px[i] + py[i]*py[i] + pz[i]*pz[i];
+    if (normDist2 > 1.0) {
+      const nd = Math.sqrt(normDist2);
+      px[i] /= nd;
+      py[i] /= nd;
+      pz[i] /= nd;
+
+      vx[i] *= -0.5;
+      vy[i] *= -0.5;
+      vz[i] *= -0.5;
+    }
+  }
+}
+
+// Reward Growth
+function triggerRewardGrowth() {
+  if (!dev) return;
+
+  const stage = getDevStage();
+  const rewireRate = getRewireRate();
+
+  let baseAttempts = 8 + Math.floor(Math.random() * 8);
+  let devGrowthMultiplier = (1.0 - stage * 0.7) * rewireRate;
+
+  if (isDishBrain()) devGrowthMultiplier *= 2.2;
+  if (isStress()) devGrowthMultiplier *= 0.4;
+
+  for (let a = 0; a < baseAttempts; a++) {
+    const postIdx = Math.floor(Math.random() * N);
+    const postEnergy = energy[postIdx];
+
+    let growthRate = devGrowthMultiplier;
+    if (postEnergy < 0.4) {
+      growthRate *= 0.25;
+    }
+
+    if (Math.random() > growthRate) continue;
+
+    let bestPre = -1;
+    let bestScore = -1;
+
+    for (let s = 0; s < 15; s++) {
+      const preIdx = Math.floor(Math.random() * N);
+      if (preIdx === postIdx) continue;
+
+      let exists = false;
+      const synapses = inc[postIdx];
+      for (let m = 0; m < synapses.length; m++) {
+        if (synapses[m].pre === preIdx) {
+          exists = true;
+          break;
+        }
+      }
+      if (exists) continue;
+
+      const dx = px[postIdx] - px[preIdx];
+      const dy = py[postIdx] - py[preIdx];
+      const dz = pz[postIdx] - pz[preIdx];
+      const dist2 = dx * dx + dy * dy + dz * dz;
+
+      const correlation = smoothedActivity[postIdx] * smoothedActivity[preIdx];
+      const score = correlation / (dist2 + 0.1);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestPre = preIdx;
+      }
+    }
+
+    if (bestPre >= 0) {
+      const startWeight = 0.05 * types[bestPre];
+      inc[postIdx].push({
+        pre: bestPre,
+        weight: startWeight,
+        activity: 0.1,
+        age: 0,
+        isReflex: false
+      });
+      outDirty = true;
+    }
+  }
+
+  updSyn();
+}
+
+// ---- MEA Subsystem (8x8 Grid, separate reads, extremely high performance) ----
+let meaGrid = new Float32Array(64); // spike events heatmap accumulation
+let lastMeaDraw = 0;
+let totalMeaSpikesCounter = 0;
+let burstDetectionCounter = 0;
+let synchronyEMA = 0.0;
+
+function recordMeaSpikes(spikes) {
+  for (let s = 0; s < spikes.length; s++) {
+    const idx = spikes[s];
+    const col = Math.min(7, Math.max(0, Math.floor((px[idx] + 1) * 4)));
+    const row = Math.min(7, Math.max(0, Math.floor((py[idx] + 1) * 4)));
+    const gridIdx = row * 8 + col;
+    meaGrid[gridIdx] += 1.0;
+    totalMeaSpikesCounter++;
+  }
+}
+
+function updateMeaStatistics() {
+  const elapsed = (performance.now() - lastMeaDraw) / 1000;
+  lastMeaDraw = performance.now();
+
+  const hz = totalMeaSpikesCounter / (elapsed || 1.0);
+  $('meaSpikes').textContent = hz.toFixed(1) + ' Hz';
+
+  let burstDetected = false;
+  if (totalMeaSpikesCounter > N * 0.12) {
+    burstDetectionCounter++;
+    burstDetected = true;
+  }
+  $('meaBursts').textContent = burstDetectionCounter;
+
+  let activeGridChannels = 0;
+  let meanGridVal = 0;
+  for (let c = 0; c < 64; c++) {
+    meanGridVal += meaGrid[c];
+    if (meaGrid[c] > 0) activeGridChannels++;
+  }
+  meanGridVal /= 64;
+
+  let variance = 0;
+  for (let c = 0; c < 64; c++) {
+    variance += (meaGrid[c] - meanGridVal) * (meaGrid[c] - meanGridVal);
+  }
+  const syncIndex = Math.min(1.0, Math.max(0.0, Math.sqrt(variance) / (meanGridVal + 0.1) * 0.15));
+  synchronyEMA = synchronyEMA * 0.8 + syncIndex * 0.2;
+  $('meaSync').textContent = synchronyEMA.toFixed(2);
+
+  const gw = M.width / 8;
+  const gh = M.height / 8;
+  mc.clearRect(0, 0, M.width, M.height);
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const gIdx = r * 8 + c;
+      const val = Math.min(1.0, meaGrid[gIdx] * 0.4);
+
+      mc.strokeStyle = '#101b2a';
+      mc.strokeRect(c * gw, r * gh, gw, gh);
+
+      if (val > 0) {
+        const alpha = 0.15 + val * 0.85;
+        mc.fillStyle = `rgba(55, 224, ${200 + val * 55 | 0}, ${alpha})`;
+        mc.fillRect(c * gw + 1, r * gh + 1, gw - 2, gh - 2);
+      }
+    }
+  }
+
+  for (let c = 0; c < 64; c++) {
+    meaGrid[c] *= 0.72;
+  }
+
+  totalMeaSpikesCounter = 0;
+}
+
+// ---- creature / arena ----
+let cx = 0.5, cy = 0.5, head = 0, score = 0, food = [];
+let energyVal = 100, alive = true, survival = 0, best = 0, tStart = performance.now();
+
+function seedFood(n) {
+  food = [];
+  for (let i = 0; i < n; i++) food.push([Math.random() * 0.9 + 0.05, Math.random() * 0.9 + 0.05]);
+}
+
+function sensors() {
+  let bestDist = 1e9, bi = -1;
+  for (let i = 0; i < food.length; i++) {
+    const dx = food[i][0] - cx, dy = food[i][1] - cy, d = dx * dx + dy * dy;
+    if (d < bestDist) {
+      bestDist = d;
+      bi = i;
+    }
+  }
+  let L = 0, R = 0;
+  if (bi >= 0) {
+    const dx = food[bi][0] - cx, dy = food[bi][1] - cy;
+    const ang = Math.atan2(dy, dx) - head;
+    const a = Math.atan2(Math.sin(ang), Math.cos(ang));
+    const prox = Math.max(0, 1 - Math.sqrt(bestDist) / 0.5);
+    if (a > 0) L = prox * (1 + Math.cos(a)); else R = prox * (1 + Math.cos(a));
+    L = Math.min(1, L); R = Math.min(1, R);
+  }
+  const wall = Math.max(0, 1 - Math.min(cx, cy, 1 - cx, 1 - cy) / 0.15);
+  return [L, R, wall];
+}
+
+function poolMean(k) {
+  let sum = 0;
+  const range = pool[k];
+  for (let i = range[0]; i < range[1]; i++) {
+    sum += smoothedActivity[i];
+  }
+  return sum / (range[1] - range[0]);
+}
+
+function loopStep() {
+  if (!alive) return;
+  const Sg = +$('Sg').value / 10, Mg = +$('Mg').value / 10;
+  const [L, R, W] = sensors();
+
+  sensorInj.fill(0);
+  for (let i = pool.sL[0]; i < pool.sL[1]; i++) sensorInj[i] = L * Sg * 14.0;
+  for (let i = pool.sR[0]; i < pool.sR[1]; i++) sensorInj[i] = R * Sg * 14.0;
+  for (let i = pool.sW[0]; i < pool.sW[1]; i++) sensorInj[i] = W * Sg * 14.0;
+
+  const result = stepBrain();
+
+  const mL = poolMean('mL'), mR = poolMean('mR');
+  const speed = 0.0028 + 0.006 * (mL + mR) / 2 * Mg;
+  head += (mL - mR) * 0.9 * Mg + (W > 0.3 ? 0.05 : 0);
+  cx += Math.cos(head) * speed; cy += Math.sin(head) * speed;
+  cx = Math.min(0.97, Math.max(0.03, cx)); cy = Math.min(0.97, Math.max(0.03, cy));
+
+  for (let i = food.length - 1; i >= 0; i--) {
+    const dx = food[i][0] - cx, dy = food[i][1] - cy;
+    if (dx * dx + dy * dy < 0.0009) {
+      food.splice(i, 1);
+      score++;
+      energyVal = Math.min(100, energyVal + 28);
+      food.push([Math.random() * 0.9 + 0.05, Math.random() * 0.9 + 0.05]);
+
+      dopamine = Math.min(2.0, dopamine + 0.85);
+      triggerRewardGrowth();
+    }
+  }
+
+  energyVal -= 0.035 + speed * 3.5;
+  survival = (performance.now() - tStart) / 1000;
+  if (energyVal <= 0) {
+    energyVal = 0;
+    alive = false;
+    best = Math.max(best, survival);
+  }
+
+  $('score').textContent = score;
+  $('surv').textContent = survival.toFixed(1) + 's';
+  $('best').textContent = best.toFixed(1) + 's';
+  $('nrg').textContent = Math.round(energyVal);
+  $('mLR').textContent = mL.toFixed(2) + ' / ' + mR.toFixed(2);
+}
+
+function respawn(sameBrain) {
+  if (!sameBrain) build();
+  cx = 0.5; cy = 0.5; head = Math.random() * 6.28; energyVal = 100; alive = true; score = 0;
+  tStart = performance.now(); survival = 0; seedFood(6);
+}
+
+// ---- Render ----
+function drawArena() {
+  const w = A.width, h = A.height; ac.clearRect(0, 0, w, h);
+  ac.strokeStyle = '#1c2b3d'; ac.strokeRect(2, 2, w - 4, h - 4);
+  ac.fillStyle = '#3ddc84'; for (const f of food) { ac.beginPath(); ac.arc(f[0] * w, f[1] * h, 4, 0, 6.283); ac.fill(); }
+  ac.save(); ac.translate(cx * w, cy * h); ac.rotate(head); ac.fillStyle = alive ? '#ffd24d' : '#5a6b80';
+  ac.beginPath(); ac.moveTo(11, 0); ac.lineTo(-7, 6); ac.lineTo(-7, -6); ac.closePath(); ac.fill(); ac.restore();
+
+  const bw = w - 24, bx0 = 12, e = energyVal / 100;
+  ac.fillStyle = '#132030'; ac.fillRect(bx0, 10, bw, 10);
+  ac.fillStyle = e > 0.5 ? '#3ddc84' : e > 0.25 ? '#ffd24d' : '#ff5a5a'; ac.fillRect(bx0, 10, bw * e, 10);
+  ac.fillStyle = '#8aa0bb'; ac.font = '12px system-ui'; ac.fillText('energy', bx0 + 2, 9);
+  ac.fillStyle = '#eaf1fb'; ac.font = 'bold 15px system-ui'; ac.fillText('⏱ ' + survival.toFixed(1) + 's', bx0, 40);
+  if (best > 0) { ac.fillStyle = '#6a7c93'; ac.font = '12px system-ui'; ac.fillText('best ' + best.toFixed(1) + 's', bx0, 56); }
+  if (!alive) {
+    ac.fillStyle = 'rgba(5,8,13,0.72)'; ac.fillRect(0, 0, w, h);
+    ac.fillStyle = '#ff8a63'; ac.font = 'bold 26px system-ui'; ac.textAlign = 'center'; ac.fillText('💀 starved', w / 2, h / 2 - 14);
+    ac.fillStyle = '#eaf1fb'; ac.font = '16px system-ui'; ac.fillText('survived ' + survival.toFixed(1) + 's', w / 2, h / 2 + 16);
+    ac.fillStyle = '#6a7c93'; ac.font = '13px system-ui'; ac.fillText('Respawn (same brain) or grow a New brain', w / 2, h / 2 + 40); ac.textAlign = 'left';
+  }
+}
+
+let bx = new Float32Array(0), by = new Float32Array(0), bz = new Float32Array(0);
+let lastSelfOrgStep = 0;
+
+// Persistent draw buffers + throttled sort/threshold (recomputed every few frames
+// instead of allocating and sorting on every single frame).
+let ord = [];
+let activityScores = new Float32Array(0);
+let scoreSortBuf = new Float32Array(0);
+let threshRank = 0;
+let brainFrame = 0;
+const SORT_INTERVAL = 6;
+
+function drawBrain() {
+  const w = B.width, h = B.height, cxx = w / 2, cyy = h / 2, S = Math.min(w, h) * 0.4, d = 3.2; bc.clearRect(0, 0, w, h);
+  if (bx.length !== N) {
+    bx = new Float32Array(N); by = new Float32Array(N); bz = new Float32Array(N);
+    activityScores = new Float32Array(N); scoreSortBuf = new Float32Array(N);
+    ord = [...Array(N).keys()];
+    brainFrame = 0; // force recompute below
+  }
+  const ct = Math.cos(theta), st = Math.sin(theta); let mAct = 0, nAct = 0;
+  for (let i = 0; i < N; i++) { const xr = px[i] * ct + pz[i] * st, zr = -px[i] * st + pz[i] * ct; bz[i] = zr; const f = d / (d - zr); bx[i] = cxx + xr * S * f; by[i] = cyy + py[i] * S * f; }
+
+  if (brainFrame % SORT_INTERVAL === 0) {
+    ord.sort((p, q) => bz[p] - bz[q]);
+
+    for (let i = 0; i < N; i++) {
+      let connWeightSum = 0;
+      const synapses = inc[i];
+      for (let m = 0; m < synapses.length; m++) {
+        connWeightSum += Math.abs(synapses[m].weight);
+      }
+      activityScores[i] = firingRate[i] * 100.0 + connWeightSum;
+      scoreSortBuf[i] = activityScores[i];
+    }
+    scoreSortBuf.sort((a, b) => b - a);
+    threshRank = scoreSortBuf[Math.floor(N * 0.10)] || 0;
+  }
+  brainFrame++;
+
+  for (const i of ord) {
+    if (activityScores[i] < threshRank) continue;
+
+    const synapses = inc[i];
+    for (let m = 0; m < synapses.length; m++) {
+      const syn = synapses[m];
+      const preIdx = syn.pre;
+      if (Math.abs(syn.weight) < 0.25) continue;
+
+      const depth = (bz[i] + bz[preIdx] + 2) / 4;
+      const fadeVal = syn.activity;
+
+      bc.beginPath();
+      bc.moveTo(bx[preIdx], by[preIdx]);
+      bc.lineTo(bx[i], by[i]);
+
+      if (types[preIdx] > 0) {
+        bc.strokeStyle = `rgba(55, 224, 200, ${0.08 * fadeVal * depth})`;
+      } else {
+        bc.strokeStyle = `rgba(255, 138, 99, ${0.08 * fadeVal * depth})`;
+      }
+      bc.lineWidth = Math.min(2.0, Math.abs(syn.weight) * 0.8);
+      bc.stroke();
+    }
+  }
+
+  for (const i of ord) {
+    const vVal = Math.min(1.0, Math.abs(v[i] > 20 ? 1.0 : (v[i] + 70) / 100));
+    const firingVal = firingRate[i];
+    const calciumVal = calciumActivity[i];
+
+    mAct += vVal;
+    if (vVal > 0.4) nAct++;
+
+    const depth = (bz[i] + 1) / 2;
+    const r = (1.5 + calciumVal * 5.5) * (d / (d - bz[i]));
+    const al = (0.15 + vVal * 0.85) * (0.45 + 0.55 * depth);
+    const p = inPool(i);
+
+    if (energy[i] > 0.8 && Math.random() < 0.1) {
+      bc.beginPath();
+      bc.arc(bx[i], by[i], r * 2.2, 0, 6.283);
+      bc.fillStyle = `rgba(90, 168, 255, ${0.04 * depth})`;
+      bc.fill();
+    }
+
+    if (p === 'sL' || p === 'sR' || p === 'sW') {
+      bc.fillStyle = 'rgba(55,224,200,' + (0.3 + calciumVal * 0.7) + ')';
+    } else if (p === 'mL' || p === 'mR') {
+      bc.fillStyle = 'rgba(255,210,77,' + (0.3 + calciumVal * 0.7) + ')';
+    } else {
+      const hue = Math.floor(morphogen[i] * 360);
+      const saturation = types[i] > 0 ? '100%' : '70%';
+      const lightness = Math.floor(45 + vVal * 45);
+      bc.fillStyle = `hsla(${hue}, ${saturation}, ${lightness}%, ${al})`;
+    }
+
+    bc.beginPath();
+    bc.arc(bx[i], by[i], r, 0, 6.283);
+    bc.fill();
+  }
+
+  popHist.push(nAct); if (popHist.length > 200) popHist.shift();
+  if (popHist.length > 2) { const a0 = popHist[popHist.length - 2], a1 = popHist[popHist.length - 1]; if (a0 > 0) sigEMA = 0.95 * sigEMA + 0.05 * (a1 / a0); }
+  $('mAct').textContent = (mAct / N).toFixed(2);
+  $('mActive').textContent = nAct;
+  $('mSig').textContent = sigEMA.toFixed(2);
+}
+
+function resize() { A.width = A.clientWidth; A.height = A.clientHeight; B.width = B.clientWidth; B.height = B.clientHeight; }
+addEventListener('resize', resize);
+
+// ---- Animation & Core loop ----
+function frame() {
+  theta += 0.005;
+  if (playing) {
+    loopStep();
+
+    if (stepCount % 10 === 0) {
+      stepSelfOrganization();
+    }
+
+    if (stepCount % 20 === 0) {
+      updateMeaStatistics();
+    }
+  }
+  drawArena();
+  drawBrain();
+  requestAnimationFrame(frame);
+}
+
+// Collapsible hide controls toggle
+let controlsHidden = false;
+$('toggleControls').onclick = () => {
+  controlsHidden = !controlsHidden;
+  const section = $('controls-section');
+  if (controlsHidden) {
+    section.classList.add('closed');
+    $('toggleControls').textContent = 'Show Sliders & Modifiers';
+  } else {
+    section.classList.remove('closed');
+    $('toggleControls').textContent = 'Hide Sliders & Modifiers';
+  }
+  resize();
+};
+
+$('dale').onclick = e => { dale = !dale; e.target.textContent = dale ? 'Inhibition: FUNCTIONAL (Dale)' : 'Inhibition: cosmetic (tanh)'; e.target.className = dale ? 'on' : ''; };
+$('dev').onclick = e => { dev = !dev; e.target.textContent = dev ? 'Development: ON 🌱' : 'Development: OFF'; e.target.className = dev ? 'on' : ''; };
+$('reward').onclick = e => { reward = !reward; e.target.textContent = reward ? 'Reward on feeding: ON' : 'Reward on feeding: OFF'; e.target.className = reward ? 'on' : ''; };
+$('newb').onclick = () => { respawn(false); };
+$('respawn').onclick = () => { respawn(true); };
+$('pause').onclick = e => { playing = !playing; e.target.textContent = playing ? 'Pause' : 'Play'; };
+
+A.addEventListener('click', ev => { const r = A.getBoundingClientRect(); food.push([(ev.clientX - r.left) / A.width, (ev.clientY - r.top) / A.height]); });
+
+// Draggable arena/brain divider
+const splitter = document.getElementById('splitter');
+const main = document.getElementById('main');
+const arena = document.getElementById('arena');
+let dragging = false;
+
+splitter.addEventListener('mousedown', () => { dragging = true; document.body.style.cursor = 'col-resize'; });
+window.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor = ''; });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const rect = main.getBoundingClientRect();
+  let x = e.clientX - rect.left;
+  const panel = 240;
+  const splitterWidth = 8;
+  x = Math.max(200, Math.min(rect.width - panel - splitterWidth - 200, x));
+  arena.style.flex = 'none';
+  arena.style.width = x + 'px';
+  resize();
+});
+
+// Bootstrap
+resize();
+updSyn();
+build();
+seedFood(6);
+frame();
+</script></body></html>
