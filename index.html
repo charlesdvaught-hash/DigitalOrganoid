@@ -118,12 +118,13 @@
    <div class="vit"><span class="vk">Active now</span><span class="vv" id="mActive">0</span></div>
    <div class="vit"><span class="vk">Branching σ</span><span class="vv" id="mSig">0.00</span></div>
    <div class="vit"><span class="vk">Estimated synapses</span><span class="vv" id="mSyn">6000</span></div>
-   <div class="vit"><span class="vk">L / R / brake</span><span class="vv" id="mLR">0 / 0 / 0</span></div>
+   <div class="vit"><span class="vk">L / R motor</span><span class="vv" id="mLR">0 / 0</span></div>
+   <div class="vit"><span class="vk">Food / Hunger / Tired</span><span class="vv" id="mSense">0 / 0 / 0</span></div>
   </div>
 
   <div style="margin-top:10px; border-top:1px solid #16202e; padding-top:6px;">
-   <div class="leg"><span class="d" style="background:#37e0c8"></span>sensor neurons</div>
-   <div class="leg"><span class="d" style="background:#ffd24d"></span>motor neurons · <span class="d" style="background:#ff6060"></span>brake</div>
+   <div class="leg"><span class="d" style="background:#37e0c8"></span>exteroceptive (food/wall) · <span class="d" style="background:#b57cff"></span>interoceptive (hunger/tired)</div>
+   <div class="leg"><span class="d" style="background:#ffd24d"></span>motor neurons</div>
    <div class="leg"><span class="d" style="background:#5aa8ff"></span>excitatory · <span class="d" style="background:#ff8a63"></span>inhibitory</div>
   </div>
   <div class="hint">Development stage, conditions, and spatial forces drive self-organization. Enable "Development: ON" and "Reward on feeding" for DishBrain learning!</div>
@@ -155,7 +156,11 @@ const SUBTYPE_FS = 2;   // Fast Spiking Inhibitory
 const SUBTYPE_LTS = 3;  // Low-Threshold Spiking Inhibitory
 
 // Pools definition
-let pool = { sL: [0, 30], sR: [30, 60], sW: [60, 90], mL: [90, 130], mR: [130, 170], mB: [170, 190] };
+// Sensory pools (sL/sR food direction, sW wall, sD food distance, sH hunger, sT fatigue)
+// feed the recurrent network as injected currents. Motor pools (mL/mR) are read back out.
+// Only sL/sR/sW have weak innate reflexes; sD/sH/sT are NOT wired to motors — the network
+// must learn any use of distance/hunger/fatigue on its own via reward-modulated plasticity.
+let pool = { sL: [0, 20], sR: [20, 40], sW: [40, 60], sD: [60, 80], sH: [80, 100], sT: [100, 120], mL: [120, 155], mR: [155, 190] };
 function inPool(i) {
   for (const k in pool) {
     if (i >= pool[k][0] && i < pool[k][1]) return k;
@@ -884,6 +889,7 @@ function updateMeaStatistics() {
 
 // ---- creature / arena ----
 let cx = 0.5, cy = 0.5, head = 0, headVel = 0, score = 0, food = [];
+let tiredness = 0; // body-level fatigue: accrues with movement, recovers at rest
 let energyVal = 100, alive = true, survival = 0, best = 0, tStart = performance.now();
 
 function seedFood(n) {
@@ -920,12 +926,11 @@ function sensors() {
   L = Math.min(1, Math.max(0, L + (Math.random() - 0.5) * 0.04));
   R = Math.min(1, Math.max(0, R + (Math.random() - 0.5) * 0.04));
   const wall = Math.max(0, 1 - Math.min(cx, cy, 1 - cx, 1 - cy) / 0.15);
-  // Short-range "on-food" cue: ramps up only when very close to a food source.
-  // Drives the brake pool — the dopaminergic slowing response that makes animals
-  // decelerate on encountering food so they can stay and consume it.
-  const pr = nearest / 0.12;
-  const prox = (food.length > 0) ? Math.exp(-pr * pr) : 0;
-  return [L, R, wall, prox];
+  // Graded food-distance sense: how close the nearest food is (1 = on it, ~0 = far).
+  // This is a sensory signal fed to the network — the creature is free to do nothing
+  // with it, or learn to act on it. It is NOT wired to any motor.
+  const foodClose = (food.length > 0) ? 1 / (1 + (nearest / 0.3) * (nearest / 0.3)) : 0;
+  return [L, R, wall, foodClose];
 }
 
 function poolMean(k) {
@@ -940,25 +945,30 @@ function poolMean(k) {
 function loopStep() {
   if (!alive) return;
   const Sg = +$('Sg').value / 10, Mg = +$('Mg').value / 10;
-  const [L, R, W, prox] = sensors();
+  const [L, R, W, foodClose] = sensors();
+  const hunger = 1 - energyVal / 100;   // interoceptive: how hungry (low energy)
+  const tired = Math.min(1, tiredness); // interoceptive: how fatigued
 
   sensorInj.fill(0);
   for (let i = pool.sL[0]; i < pool.sL[1]; i++) sensorInj[i] = L * Sg * 14.0;
   for (let i = pool.sR[0]; i < pool.sR[1]; i++) sensorInj[i] = R * Sg * 14.0;
   for (let i = pool.sW[0]; i < pool.sW[1]; i++) sensorInj[i] = W * Sg * 14.0;
-  // Feed the food-proximity cue into the brake pool (dopaminergic slowing on food).
-  for (let i = pool.mB[0]; i < pool.mB[1]; i++) sensorInj[i] = prox * Sg * 14.0;
+  // Exteroceptive + interoceptive senses feed the network. No sense is wired to a motor;
+  // whether the creature learns to act on food distance, hunger, or fatigue is up to it.
+  for (let i = pool.sD[0]; i < pool.sD[1]; i++) sensorInj[i] = foodClose * Sg * 14.0;
+  for (let i = pool.sH[0]; i < pool.sH[1]; i++) sensorInj[i] = hunger * Sg * 14.0;
+  for (let i = pool.sT[0]; i < pool.sT[1]; i++) sensorInj[i] = tired * Sg * 14.0;
 
   const result = stepBrain();
 
-  const mL = poolMean('mL'), mR = poolMean('mR'), mB = poolMean('mB');
-  // Locomotion emerges from motor-neuron drive rather than a fixed forward creep, so when
-  // the network quiets the creature coasts to a near-stop on its own. The brake pool (mB),
-  // driven by the on-food cue, actively scales speed down — a neural stop command, not a
-  // scripted rule. Tiny residual floor keeps it from freezing solid.
+  const mL = poolMean('mL'), mR = poolMean('mR');
+  // Differential drive: total motor firing sets speed, the left/right difference sets
+  // turning. There is no forced forward creep and no scripted brake — the creature speeds
+  // up by firing its motor pools harder and slows (to a near-stop) by firing them less.
+  // Whether it learns to modulate that in response to food distance, hunger, or fatigue
+  // is left to the network and reward-modulated plasticity, not hand-coded rules.
   const fwd = (mL + mR) / 2;
-  const brake = Math.min(1, 1.7 * mB);
-  let speed = (0.0009 + 0.007 * fwd * Mg) * (1 - brake);
+  let speed = 0.0009 + 0.007 * fwd * Mg;
   if (speed < 0) speed = 0;
   // Proportional wall avoidance: steer toward the arena centre, scaled by how close the
   // nearest wall is (W), instead of a fixed one-directional kick past a threshold.
@@ -986,6 +996,8 @@ function loopStep() {
   }
 
   energyVal -= 0.035 + speed * 3.5;
+  // Body fatigue accrues with movement and recovers when resting; feeds the sT sense.
+  tiredness = Math.max(0, Math.min(1, tiredness + speed * 3.0 - 0.008));
   survival = (performance.now() - tStart) / 1000;
   if (energyVal <= 0) {
     energyVal = 0;
@@ -997,12 +1009,13 @@ function loopStep() {
   $('surv').textContent = survival.toFixed(1) + 's';
   $('best').textContent = best.toFixed(1) + 's';
   $('nrg').textContent = Math.round(energyVal);
-  $('mLR').textContent = mL.toFixed(2) + ' / ' + mR.toFixed(2) + ' / ' + mB.toFixed(2);
+  $('mLR').textContent = mL.toFixed(2) + ' / ' + mR.toFixed(2);
+  $('mSense').textContent = foodClose.toFixed(2) + ' / ' + hunger.toFixed(2) + ' / ' + tired.toFixed(2);
 }
 
 function respawn(sameBrain) {
   if (!sameBrain) build();
-  cx = 0.5; cy = 0.5; head = Math.random() * 6.28; headVel = 0; energyVal = 100; alive = true; score = 0;
+  cx = 0.5; cy = 0.5; head = Math.random() * 6.28; headVel = 0; energyVal = 100; alive = true; score = 0; tiredness = 0;
   tStart = performance.now(); survival = 0; seedFood(6);
 }
 
@@ -1114,12 +1127,12 @@ function drawBrain() {
       bc.fill();
     }
 
-    if (p === 'sL' || p === 'sR' || p === 'sW') {
+    if (p === 'sL' || p === 'sR' || p === 'sW' || p === 'sD') {
       bc.fillStyle = 'rgba(55,224,200,' + (0.3 + calciumVal * 0.7) + ')';
+    } else if (p === 'sH' || p === 'sT') {
+      bc.fillStyle = 'rgba(181,124,255,' + (0.3 + calciumVal * 0.7) + ')';
     } else if (p === 'mL' || p === 'mR') {
       bc.fillStyle = 'rgba(255,210,77,' + (0.3 + calciumVal * 0.7) + ')';
-    } else if (p === 'mB') {
-      bc.fillStyle = 'rgba(255,96,96,' + (0.3 + calciumVal * 0.7) + ')';
     } else {
       const hue = Math.floor(morphogen[i] * 360);
       const saturation = types[i] > 0 ? '100%' : '70%';
