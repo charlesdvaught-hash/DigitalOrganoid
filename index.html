@@ -988,6 +988,7 @@ function loopStep() {
       food.splice(i, 1);
       score++;
       energyVal = Math.min(100, energyVal + 28);
+      tiredness = Math.max(0, tiredness - 0.04); // a meal eases fatigue a little
       food.push([Math.random() * 0.9 + 0.05, Math.random() * 0.9 + 0.05]);
 
       dopamine = Math.min(2.0, dopamine + 0.85);
@@ -995,7 +996,11 @@ function loopStep() {
     }
   }
 
-  energyVal -= 0.035 + speed * 3.5;
+  // Metabolic cost = resting baseline + linear effort + quadratic drag. This makes energy
+  // PER DISTANCE a U-shaped cost-of-transport curve: crawling wastes baseline metabolism,
+  // sprinting wastes effort to drag, and a moderate speed is the most efficient way to
+  // cover ground. Per tick, slower always burns less — so resting conserves energy.
+  energyVal -= 0.030 + 2.0 * speed + 400 * speed * speed;
   // Body fatigue accrues with movement and recovers when resting; feeds the sT sense.
   tiredness = Math.max(0, Math.min(1, tiredness + speed * 3.0 - 0.008));
   survival = (performance.now() - tStart) / 1000;
