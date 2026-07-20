@@ -1,0 +1,4 @@
+gen  2  best=3.629 (food=2.27 surv=4541) mean=2.905
+gen  3  best=3.865 (food=2.47 surv=4660) mean=2.928
+gen  4  best=3.865 (food=2.47 surv=4660) mean=2.818
+batch done: 159 evals this call | gen=5 | 25/48 scored in current gen | 33973s

@@ -55,7 +55,7 @@
  .leg{font-size:11px;margin:2px 0}.d{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
  .collapsible {transition: max-height 0.25s ease-out; overflow: hidden; max-height: 1000px;}
  .collapsible.closed {max-height: 0 !important; margin: 0; padding: 0; border: none;}
-</style></head><body><div id="sitenav" style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:9px;align-items:center;flex-wrap:wrap;max-width:94vw"><span style="color:#eaf1fb;font-weight:600">Creature</span><span style="color:#2c3a4d">|</span><a href="gamification_demos.html" style="color:#6ea8ff;text-decoration:none">Game Demos</a><span style="color:#2c3a4d">|</span><a href="organoid_lab.html" style="color:#6ea8ff;text-decoration:none">Lab</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer.html" style="color:#6ea8ff;text-decoration:none">Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer_3d.html" style="color:#6ea8ff;text-decoration:none">3D Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_creature.html" style="color:#6ea8ff;text-decoration:none">Creature v0</a><span style="color:#2c3a4d">|</span><a href="findings.html" style="color:#6ea8ff;text-decoration:none">Findings</a></div><div id="wrap">
+</style></head><body><script src="breedstock_brains.js"></script><div id="sitenav" style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:9px;align-items:center;flex-wrap:wrap;max-width:94vw"><span style="color:#eaf1fb;font-weight:600">Creature</span><span style="color:#2c3a4d">|</span><a href="gamification_demos.html" style="color:#6ea8ff;text-decoration:none">Game Demos</a><span style="color:#2c3a4d">|</span><a href="organoid_lab.html" style="color:#6ea8ff;text-decoration:none">Lab</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer.html" style="color:#6ea8ff;text-decoration:none">Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer_3d.html" style="color:#6ea8ff;text-decoration:none">3D Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_creature.html" style="color:#6ea8ff;text-decoration:none">Creature v0</a><span style="color:#2c3a4d">|</span><a href="findings.html" style="color:#6ea8ff;text-decoration:none">Findings</a></div><div id="wrap">
 <header><h1>🧫🐛 Organoid Creature — embodied closed loop</h1>
 <div class="sub">The creature's eyes drive sensor neurons; motor neurons steer it. The organoid IS the brain. Click the arena to drop food.</div></header>
 <div id="main">
@@ -97,6 +97,8 @@
    <button id="reward" class="">Reward on feeding: OFF</button>
    <button id="newb">🌱 New brain</button>
    <button id="respawn">🔄 Respawn (same brain)</button>
+   <div class="lab" style="margin-top:6px">Evolved brain <span class="val" id="vChamp">—</span></div>
+   <select id="champSel" style="width:100%;background:#0e1622;color:#eaf1fb;border:1px solid #2c3a4d;border-radius:6px;padding:4px"><option value="-1">Random brain (default)</option></select>
    <button id="pause">Pause</button>
   </div>
 
@@ -378,6 +380,40 @@ function norm() {
       for (const e of inc[i]) e.weight *= g;
     }
   }
+}
+
+// Instantiate a specific evolved brain (from breedstock_brains.js) instead of a
+// fresh random build(). Rebuilds every neuron array + incoming-synapse lists
+// from the exported network so the exact champion runs, weights and all.
+function loadChampionBrain(b) {
+  N = b.N;
+  $('N').value = N; $('vN').textContent = N;
+  px = new Float32Array(b.px); py = new Float32Array(b.py); pz = new Float32Array(b.pz);
+  vx = new Float32Array(N); vy = new Float32Array(N); vz = new Float32Array(N);
+  types = Int8Array.from(b.types); subtypes = Int8Array.from(b.subtypes);
+  morphogen = new Float32Array(N); sensorInj = new Float32Array(N);
+  a_param = Float32Array.from(b.a); b_param = Float32Array.from(b.b);
+  c_param = Float32Array.from(b.c); d_param = Float32Array.from(b.d);
+  v = new Float32Array(N); u = new Float32Array(N);
+  energy = new Float32Array(N); fatigue = new Float32Array(N);
+  tracePre = new Float32Array(N); tracePost = new Float32Array(N);
+  smoothedActivity = new Float32Array(N); firingRate = new Float32Array(N);
+  calciumActivity = new Float32Array(N); spikeCount = new Int32Array(N);
+  for (let i = 0; i < N; i++) {
+    morphogen[i] = Math.random();
+    energy[i] = 1.0; fatigue[i] = 0.0;
+    v[i] = c_param[i]; u[i] = b_param[i] * v[i];
+  }
+  inc = [];
+  for (let i = 0; i < N; i++) inc.push([]);
+  for (let j = 0; j < N; j++) {
+    for (const e of b.inc[j]) {   // e = [pre, weight, isReflex]
+      inc[j].push({ pre: e[0], weight: e[1], activity: e[2] ? 1.0 : 0.5,
+                    age: e[2] ? 500 : 0, isReflex: !!e[2] });
+    }
+  }
+  outDirty = true;
+  updSyn();
 }
 
 // Step Spiking Neuron Dynamics (Izhikevich)
@@ -1197,8 +1233,27 @@ $('toggleControls').onclick = () => {
 $('dale').onclick = e => { dale = !dale; e.target.textContent = dale ? 'Inhibition: FUNCTIONAL (Dale)' : 'Inhibition: cosmetic (tanh)'; e.target.className = dale ? 'on' : ''; };
 $('dev').onclick = e => { dev = !dev; e.target.textContent = dev ? 'Development: ON 🌱' : 'Development: OFF'; e.target.className = dev ? 'on' : ''; };
 $('reward').onclick = e => { reward = !reward; e.target.textContent = reward ? 'Reward on feeding: ON' : 'Reward on feeding: OFF'; e.target.className = reward ? 'on' : ''; };
-$('newb').onclick = () => { respawn(false); };
+$('newb').onclick = () => { $('champSel').value = '-1'; $('vChamp').textContent = '—'; respawn(false); };
 $('respawn').onclick = () => { respawn(true); };
+
+// Evolved-brain selector (populated from window.BREEDSTOCK_BRAINS if present).
+(function initChampions() {
+  const sel = $('champSel');
+  const brains = window.BREEDSTOCK_BRAINS;
+  if (!brains || !brains.length) { $('vChamp').textContent = 'none'; return; }
+  brains.forEach((c, i) => {
+    const o = document.createElement('option');
+    o.value = String(i); o.textContent = c.label; sel.appendChild(o);
+  });
+  sel.onchange = () => {
+    const i = +sel.value;
+    if (i < 0) { $('vChamp').textContent = '—'; respawn(false); return; }
+    const c = brains[i];
+    loadChampionBrain(c.brain);
+    $('vChamp').textContent = 'gen ' + c.generation + ' · fit ' + c.fitness.toFixed(2);
+    respawn(true);   // keep the loaded brain, reset the body
+  };
+})();
 $('pause').onclick = e => { playing = !playing; e.target.textContent = playing ? 'Pause' : 'Play'; };
 
 A.addEventListener('click', ev => { const r = A.getBoundingClientRect(); food.push([(ev.clientX - r.left) / A.width, (ev.clientY - r.top) / A.height]); });

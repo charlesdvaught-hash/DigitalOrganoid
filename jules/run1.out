@@ -1,0 +1,4 @@
+gen 11  best=4.043 (food=2.67 surv=4589) mean=2.775
+gen 12  best=4.043 (food=2.67 surv=4589) mean=2.850
+gen 13  best=4.043 (food=2.67 surv=4589) mean=2.873
+batch done: 159 evals this call | gen=14 | 19/48 scored in current gen | 33967s
