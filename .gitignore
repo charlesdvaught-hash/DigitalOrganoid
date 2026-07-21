@@ -10,3 +10,4 @@ test_checkpoints.json
 plots/
 organoid_findings_report.pdf
 run.log
+venv/
