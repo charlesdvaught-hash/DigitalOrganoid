@@ -1,0 +1,335 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Organoid Creature — Evolution Arena (full brains)</title>
+<style>
+ html,body{margin:0;height:100%;background:#05080d;color:#cdd8e8;font-family:system-ui,Segoe UI,Arial;overflow:hidden}
+ #sitenav{position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:9px;align-items:center;flex-wrap:wrap;max-width:94vw}
+ #sitenav a{color:#6ea8ff;text-decoration:none}#sitenav .sep{color:#2c3a4d}
+ #wrap{position:absolute;inset:0;display:flex;flex-direction:column;padding:44px 16px 12px;box-sizing:border-box}
+ h1{font-size:18px;margin:0 0 2px}.sub{font-size:12px;color:#8aa0bd;margin-bottom:8px}
+ #main{flex:1;display:flex;gap:14px;min-height:0}
+ #arenaWrap{flex:1;position:relative;min-width:0;display:flex;flex-direction:column}
+ #arena{flex:1;width:100%;background:#04070c;border:1px solid #16202e;border-radius:8px;display:block}
+ #side{width:300px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+ .card{background:#0a1018;border:1px solid #1c2a3b;border-radius:8px;padding:10px}
+ .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#7f97b6;margin:0 0 8px}
+ .stat{display:flex;justify-content:space-between;font-size:13px;margin:3px 0}
+ .stat .v{font-weight:600;color:#eaf1fb}
+ .board .row{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;font-size:13px;transition:background .3s}
+ .board .row.flash{background:#12351f}
+ .dot{width:12px;height:12px;border-radius:50%;flex:none;box-shadow:0 0 6px currentColor}
+ .board .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .board .sc{font-weight:700;color:#eaf1fb;font-variant-numeric:tabular-nums}
+ .rank{width:16px;color:#5f7796;font-size:11px;text-align:right}
+ #chal{font-size:12px;color:#9fb4d0}
+ #bar{height:6px;background:#132030;border-radius:3px;overflow:hidden;margin-top:6px}
+ #barfill{height:100%;width:0;background:#3ddc84}
+ #toasts{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:50;display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;width:min(92%,560px)}
+ .toast{background:rgba(12,24,16,.94);border:1px solid #2c6b42;color:#dff5e6;font-size:12.5px;padding:7px 12px;border-radius:20px;box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:0;transform:translateY(-6px);animation:pop .35s forwards}
+ .toast b{color:#8ef0b0}.toast .out{color:#ff9a9a}
+ @keyframes pop{to{opacity:1;transform:translateY(0)}}
+ .fade{animation:fo .5s forwards}@keyframes fo{to{opacity:0;transform:translateY(-6px)}}
+ button{background:#16283c;color:#cfe0f5;border:1px solid #2c445f;border-radius:6px;padding:6px 10px;font:12px system-ui;cursor:pointer}
+ button:hover{background:#1d334c}
+ .controls{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+ .mut{font-size:11px;color:#7f97b6}
+ input[type=range]{width:100%}
+ .foot{font-size:11px;color:#5f7796;margin-top:6px}
+</style></head><body>
+<div id="sitenav">
+ <a href="index.html">Creature</a><span class="sep">|</span>
+ <a href="gamification_demos.html">Game Demos</a><span class="sep">|</span>
+ <span style="color:#eaf1fb;font-weight:600">Evolution Arena</span><span class="sep">|</span>
+ <a href="organoid_lab.html">Lab</a><span class="sep">|</span>
+ <a href="findings.html">Findings</a>
+</div>
+<div id="wrap">
+ <h1>🧬🧫 Evolution Arena — champions run the <em>fully-specced</em> brain</h1>
+ <div class="sub">Every creature is a real spiking organoid (Izhikevich · Dale · reward-gated STDP · homeostasis · metabolism), just small (N≈120). Now with <b>starvation</b>: energy drains every tick and only food refills it, so a brain scores by how long it survives — the honest test of whether it can actually find food. Challengers are bred and tested in fast off-screen heats; the arena shows the current top 5. Beat the weakest champion and you're inducted.</div>
+ <div id="main">
+  <div id="arenaWrap">
+   <div id="toasts"></div>
+   <canvas id="arena"></canvas>
+  </div>
+  <div id="side">
+   <div class="card">
+    <h2>Generation</h2>
+    <div class="stat"><span>Generation</span><span class="v" id="sGen">1</span></div>
+    <div class="stat"><span>Challengers left</span><span class="v" id="sLeft">—</span></div>
+    <div class="stat"><span>Inductions this gen</span><span class="v" id="sInd">0</span></div>
+    <div class="stat"><span>Best survival ever</span><span class="v" id="sBest">0</span></div>
+   </div>
+   <div class="card board" id="board">
+    <h2>Champions' arena — top 5</h2>
+   </div>
+   <div class="card">
+    <h2>Now testing (off-screen heat)</h2>
+    <div id="chal">warming up…</div>
+    <div id="bar"><div id="barfill"></div></div>
+   </div>
+   <div class="card">
+    <h2>Controls</h2>
+    <div class="controls">
+     <button id="btnPause">Pause</button>
+     <button id="btnFF">Fast-forward heats: ON</button>
+     <button id="btnReset">Reset lineage</button>
+    </div>
+    <div class="mut" style="margin-top:8px">Mutation rate <span id="vMut">0.18</span></div>
+    <input type="range" id="mut" min="2" max="45" value="18">
+    <div class="foot">Score = <b>ticks survived</b> before starving (same food layout for everyone in a generation). Energy drains every tick; only eating refills it — so a brain that can't find food dies fast, and a high score means it genuinely learned to forage, not that it got lucky. Once brains survive the whole heat they all hit the tick cap, so <b>🍒 pellets eaten breaks the tie</b> — among the survivors, the better forager ate more.</div>
+   </div>
+  </div>
+ </div>
+</div>
+<script src="brain.js"></script>
+<script>
+/* ============================ config ============================ */
+const HEAT_TICKS = 3000;      // max ticks per heat — a strong forager can survive to this cap
+const CHALLENGERS_PER_GEN = 10;
+const N_CHAMPS = 5;
+const HEAT_BURST = 26;        // challenger ticks simulated per animation frame (fast-forward)
+const EXHIB_STEPS = 2;        // champion exhibition ticks per frame (real-time-ish)
+// body coupling (chosen so the small brains' correct-but-small motor signals move the body)
+const SPEED_BASE = 0.0018, SPEED_GAIN = 0.5, TURN_GAIN = 10, EAT_R2 = 0.0009;
+// Metabolism: base energy burned per tick even at rest. Tuned so a creature that
+// never finds food starves in ~1000-1300 ticks (well under the cap), while one
+// that keeps eating (+28/pellet) can survive the whole heat. THIS is what makes
+// survival time a real food-finding test rather than a wandering-endurance test.
+const METAB_BASE = 0.075;
+const GENOME_TWEAKS = { N:120, injMult:30, reflexScale:6 };
+
+/* ============================ naming ============================ */
+const ADJ = ['Ochre','Pale','Umber','Cobalt','Verdant','Ashen','Crimson','Dusky','Gilded','Sable','Amber','Ivory','Slate','Russet','Teal','Hollow','Bright','Murky','Feral','Quiet'];
+const NOUN = ['Darter','Hugger','Drifter','Forager','Wanderer','Nibbler','Seeker','Prowler','Grazer','Skimmer','Roamer','Lurker','Sprinter','Creeper','Gadfly','Wisp','Mote','Husk','Coil','Speck'];
+function nameFromGenome(g){
+  // hash seed + a few quantized genes so mutated siblings get distinct names
+  let r=(g.seed>>>0) ^ ((g.reflexL*1000)|0) ^ (((g.motorGain*777)|0)<<7) ^ (((g.sensorGain*533)|0)<<3) ^ ((g.K|0)<<17);
+  r=r>>>0;
+  return ADJ[r%ADJ.length]+' '+NOUN[((r>>>9)>>>0)%NOUN.length];
+}
+const CHAMP_COLORS = ['#3ddc84','#6ea8ff','#ffd24d','#ff7ab6','#b48cff'];
+
+/* ============================ creature ============================ */
+// Wraps a full Brain + a body. Used both for live champion exhibition and for
+// off-screen challenger scoring. sensors/motor mapping mirror index.html.
+function makeRngLocal(seed){ let s=seed>>>0; return function(){ s|=0;s=(s+0x6D2B79F5)|0; let t=Math.imul(s^(s>>>15),1|s); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+
+class Creature {
+  constructor(genome, foodSeed, curriculum){
+    this.genome = genome;
+    this.brain = new Brain(genome);
+    this.rng = makeRngLocal(foodSeed>>>0);
+    this.cx=0.5; this.cy=0.5; this.head=this.rng()*6.283; this.hv=0;
+    this.energy=100; this.tired=0; this.score=0; this.alive=true; this.ticks=0;
+    this.name = nameFromGenome(genome);
+    this.food=[];
+    if(curriculum){ // food-in-front curriculum → guaranteed first bite → reward for STDP
+      this.food.push([clamp(this.cx+Math.cos(this.head)*0.18), clamp(this.cy+Math.sin(this.head)*0.18)]);
+    }
+    while(this.food.length<5) this.food.push([this.rng()*0.9+0.05, this.rng()*0.9+0.05]);
+  }
+  step(){
+    if(!this.alive) return;
+    const Mg=this.genome.motorGain;
+    // sensors: two antennae + wall + food-distance + hunger + fatigue
+    let L=0,R=0,nr=1e9;
+    for(const f of this.food){ const dx=f[0]-this.cx,dy=f[1]-this.cy,d=Math.hypot(dx,dy); if(d<nr)nr=d;
+      const r=d/0.35,it=1/(1+r*r),ang=Math.atan2(dy,dx)-this.head,a=Math.atan2(Math.sin(ang),Math.cos(ang));
+      L+=it*Math.max(0,Math.cos(a-0.6)); R+=it*Math.max(0,Math.cos(a+0.6)); }
+    L=1-Math.exp(-L); R=1-Math.exp(-R);
+    const wall=Math.max(0,1-Math.min(this.cx,this.cy,1-this.cx,1-this.cy)/0.15);
+    const fc=1/(1+(nr/0.3)**2), hun=1-this.energy/100;
+    const [mL,mR]=this.brain.step([L,R,wall,fc,hun,Math.min(1,this.tired)]);
+    const fwd=(mL+mR)/2; let sp=SPEED_BASE+SPEED_GAIN*fwd*Mg; if(sp<0)sp=0; if(sp>0.02)sp=0.02;
+    const tc=Math.atan2(0.5-this.cy,0.5-this.cx), dh=Math.atan2(Math.sin(tc-this.head),Math.cos(tc-this.head));
+    this.hv=this.hv*0.75+((mL-mR)*TURN_GAIN*Mg+dh*wall*0.3)*0.25; this.head+=this.hv;
+    this.cx=clamp(this.cx+Math.cos(this.head)*sp); this.cy=clamp(this.cy+Math.sin(this.head)*sp);
+    for(let i=this.food.length-1;i>=0;i--){ const dx=this.food[i][0]-this.cx,dy=this.food[i][1]-this.cy;
+      if(dx*dx+dy*dy<EAT_R2){ this.food.splice(i,1); this.score++; this.energy=Math.min(100,this.energy+28);
+        this.tired=Math.max(0,this.tired-0.04); this.food.push([this.rng()*0.9+0.05,this.rng()*0.9+0.05]);
+        this.brain.reward(0.85); } }
+    this.energy-=METAB_BASE+2.0*sp+400*sp*sp; this.tired=Math.max(0,Math.min(1,this.tired+sp*3-0.008));
+    this.ticks++; if(this.energy<=0){ this.energy=0; this.alive=false; }
+    this.lastSpeed=sp;
+  }
+  respawn(){ // for endless champion exhibition: reset body, keep the (trained) brain
+    this.cx=0.5; this.cy=0.5; this.head=this.rng()*6.283; this.hv=0; this.energy=100; this.tired=0; this.alive=true;
+    this.food=[]; while(this.food.length<6) this.food.push([this.rng()*0.9+0.05,this.rng()*0.9+0.05]);
+  }
+}
+function clamp(x){ return Math.min(0.97,Math.max(0.03,x)); }
+
+/* ============================ evolution state ============================ */
+const {randomGenome, mutate} = BrainKit;
+let champions=[];        // [{genome,score,name,color,creature}]
+let generation=1, genFoodSeed=0, inductions=0, bestEver=0;
+let challengerQueue=[];  // genomes still to test this generation
+let current=null;        // {creature, genome} being evaluated off-screen
+let mutRate=0.18, paused=false, fastFwd=true;
+
+function seedLineage(){
+  champions=[];
+  for(let i=0;i<N_CHAMPS;i++){
+    const g=Object.assign(randomGenome(), GENOME_TWEAKS);
+    champions.push(makeChampion(g, 0));
+  }
+  // give them provisional scores via a quick silent heat so the board isn't all zero
+  genFoodSeed=(Math.random()*1e9)>>>0;
+  champions.forEach(c=>{ const r=evaluate(c.genome, genFoodSeed); c.score=r.surv; c.food=r.food; });
+  champions.sort((a,b)=>fitOf(b)-fitOf(a));
+  assignColors();
+  bestEver=champions[0].score;
+  startGeneration();
+}
+function makeChampion(genome, score, food){
+  const c={genome,score,food:food||0,name:nameFromGenome(genome),color:'#888',creature:null};
+  c.creature=new Creature(genome, (genome.seed^0x9e37)>>>0, false); c.creature.respawn();
+  return c;
+}
+function assignColors(){ champions.forEach((c,i)=> c.color=CHAMP_COLORS[i%CHAMP_COLORS.length]); }
+// Composite fitness: survival ticks dominate, food eaten breaks ties. Once brains
+// forage well enough to survive the whole heat they all hit the tick cap, so food
+// eaten is what separates a good forager from a great one at the top of the board.
+function fit(surv, food){ return surv*100000 + (food||0); }
+function fitOf(c){ return fit(c.score, c.food); }
+
+// Off-screen scoring heat: fixed food seed → comparable fitness. Runs until the
+// creature starves or the tick cap is hit. Fitness = ticks survived (only eating
+// keeps you alive, so this measures food-finding). Food eaten is returned too, for
+// display — it is NOT what ranks the brains.
+function evaluate(genome, foodSeed){
+  const cr=new Creature(genome, foodSeed, true);
+  for(let t=0;t<HEAT_TICKS && cr.alive;t++) cr.step();
+  return { surv: cr.ticks, food: cr.score };
+}
+
+function startGeneration(){
+  // NB: genFoodSeed is FIXED for the whole lineage (set in seedLineage), so every
+  // creature — champions and challengers, this generation and the last — is scored
+  // on the identical arena. A bump therefore always means a genuinely better brain,
+  // never a luckier food layout. (Controlled-arena lesson from evolution_rerun.)
+  inductions=0;
+  challengerQueue=[];
+  for(let i=0;i<CHALLENGERS_PER_GEN;i++){
+    let g;
+    if(i===CHALLENGERS_PER_GEN-1){ g=Object.assign(randomGenome(), GENOME_TWEAKS); } // 1 wildcard
+    else { const parent=champions[Math.floor(Math.random()*champions.length)].genome;
+           g=mutate(parent, mutRate); Object.assign(g, {N:GENOME_TWEAKS.N}); }
+    challengerQueue.push(g);
+  }
+  nextChallenger();
+  updateHUD();
+}
+function nextChallenger(){
+  if(challengerQueue.length===0){ generation++; startGeneration(); return; }
+  const g=challengerQueue.shift();
+  current={ genome:g, creature:new Creature(g, genFoodSeed, true), name:nameFromGenome(g) };
+}
+
+// advance the current challenger heat; when done, judge induction
+function advanceHeat(bursts){
+  if(!current) return;
+  const cr=current.creature;
+  for(let b=0;b<bursts && cr.alive && cr.ticks<HEAT_TICKS;b++) cr.step();
+  if(!cr.alive || cr.ticks>=HEAT_TICKS){
+    judge(current.genome, cr.ticks, cr.score);
+    nextChallenger();
+  }
+}
+function judge(genome, surv, food){
+  bestEver=Math.max(bestEver,surv);
+  const weakest=champions[champions.length-1];
+  if(fit(surv,food)>fitOf(weakest)){
+    const out=weakest;
+    const nu=makeChampion(genome, surv, food);
+    champions[champions.length-1]=nu;
+    champions.sort((a,b)=>fitOf(b)-fitOf(a)); assignColors();
+    inductions++;
+    toast(nu.name, surv, food, out.name, out.score);
+    flashBoard();
+  }
+  updateHUD();
+}
+
+/* ============================ rendering ============================ */
+const A=document.getElementById('arena'), ac=A.getContext('2d');
+function resize(){ A.width=A.clientWidth*devicePixelRatio; A.height=A.clientHeight*devicePixelRatio; ac.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
+addEventListener('resize', resize);
+
+function drawArena(){
+  const w=A.clientWidth, h=A.clientHeight; ac.clearRect(0,0,w,h);
+  ac.strokeStyle='#16202e'; ac.lineWidth=1; ac.strokeRect(1,1,w-2,h-2);
+  // champions forage a shared exhibition arena
+  for(const c of champions){
+    const cr=c.creature;
+    // food
+    ac.fillStyle='rgba(120,200,150,.55)';
+    for(const f of cr.food){ ac.beginPath(); ac.arc(f[0]*w,f[1]*h,3,0,6.283); ac.fill(); }
+  }
+  for(const c of champions){
+    const cr=c.creature;
+    // body triangle
+    ac.save(); ac.translate(cr.cx*w, cr.cy*h); ac.rotate(cr.head);
+    ac.fillStyle=c.color; ac.globalAlpha=cr._fadeOut?0.25:1;
+    ac.beginPath(); ac.moveTo(9,0); ac.lineTo(-6,5); ac.lineTo(-6,-5); ac.closePath(); ac.fill();
+    ac.restore();
+    // name label
+    ac.globalAlpha=.85; ac.fillStyle=c.color; ac.font='11px system-ui';
+    ac.fillText(c.name, cr.cx*w+10, cr.cy*h-8); ac.globalAlpha=1;
+  }
+}
+
+function updateHUD(){
+  document.getElementById('sGen').textContent=generation;
+  document.getElementById('sLeft').textContent=challengerQueue.length+(current?1:0);
+  document.getElementById('sInd').textContent=inductions;
+  document.getElementById('sBest').textContent=bestEver;
+  // board
+  const b=document.getElementById('board');
+  b.querySelectorAll('.row').forEach(r=>r.remove());
+  champions.forEach((c,i)=>{
+    const row=document.createElement('div'); row.className='row'; row.dataset.name=c.name;
+    row.innerHTML=`<span class="rank">${i+1}</span><span class="dot" style="color:${c.color};background:${c.color}"></span><span class="nm">${c.name}</span><span class="sc">${c.score}t<span style="color:#7f97b6;font-weight:400"> · ${c.food}🍒</span></span>`;
+    b.appendChild(row);
+  });
+  // challenger readout
+  if(current){ const cr=current.creature;
+    document.getElementById('chal').innerHTML=`Testing <b style="color:#cfe0f5">${current.name}</b> — survived ${cr.ticks}t, fed ${cr.score}🍒, ${cr.alive?'alive':'💀 starved'} · to beat #5 = ${champions[champions.length-1].score}t · ${champions[champions.length-1].food}🍒`;
+    document.getElementById('barfill').style.width=(100*Math.min(1,cr.ticks/HEAT_TICKS))+'%';
+  }
+}
+
+let flashTimer=0;
+function flashBoard(){ document.querySelectorAll('#board .row').forEach(r=>{ r.classList.add('flash'); }); flashTimer=performance.now()+700; }
+function toast(inName, inSurv, inFood, outName, outSurv){
+  const t=document.createElement('div'); t.className='toast';
+  t.innerHTML=`<b>${inName}</b> (survived ${inSurv}t, ${inFood}🍒) bumped <span class="out">${outName}</span> (${outSurv}t) off the board`;
+  const box=document.getElementById('toasts'); box.appendChild(t);
+  setTimeout(()=>{ t.classList.add('fade'); setTimeout(()=>t.remove(),500); }, 3200);
+}
+
+/* ============================ main loop ============================ */
+function loop(){
+  if(!paused){
+    // champion exhibition (live-ish)
+    for(let s=0;s<EXHIB_STEPS;s++){
+      for(const c of champions){ const cr=c.creature; if(!cr.alive) cr.respawn(); cr.step(); }
+    }
+    // challenger heat (fast-forward off-screen)
+    advanceHeat(fastFwd?HEAT_BURST:4);
+  }
+  drawArena();
+  if(flashTimer && performance.now()>flashTimer){ document.querySelectorAll('#board .row').forEach(r=>r.classList.remove('flash')); flashTimer=0; }
+  requestAnimationFrame(loop);
+}
+
+/* ============================ controls ============================ */
+document.getElementById('btnPause').onclick=e=>{ paused=!paused; e.target.textContent=paused?'Resume':'Pause'; };
+document.getElementById('btnFF').onclick=e=>{ fastFwd=!fastFwd; e.target.textContent='Fast-forward heats: '+(fastFwd?'ON':'OFF'); };
+document.getElementById('btnReset').onclick=()=>{ generation=1; seedLineage(); };
+document.getElementById('mut').oninput=e=>{ mutRate=+e.target.value/100; document.getElementById('vMut').textContent=mutRate.toFixed(2); };
+
+/* ============================ go ============================ */
+resize();
+setTimeout(()=>{ seedLineage(); updateHUD(); loop(); }, 30); // let brain.js load
+</script>
+</body></html>

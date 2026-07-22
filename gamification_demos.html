@@ -26,7 +26,7 @@
  .star{color:#ffd24d}
  .list{margin-top:6px}
  .item{background:#0e1622;border:1px solid #1c2b3d;border-radius:5px;padding:5px 7px;margin-top:4px;display:flex;justify-content:space-between;font-size:11px}
-</style></head><body><div id="sitenav" style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:9px;align-items:center;flex-wrap:wrap;max-width:94vw"><a href="index.html" style="color:#6ea8ff;text-decoration:none">Creature</a><span style="color:#2c3a4d">|</span><span style="color:#eaf1fb;font-weight:600">Game Demos</span><span style="color:#2c3a4d">|</span><a href="organoid_lab.html" style="color:#6ea8ff;text-decoration:none">Lab</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer.html" style="color:#6ea8ff;text-decoration:none">Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer_3d.html" style="color:#6ea8ff;text-decoration:none">3D Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_creature.html" style="color:#6ea8ff;text-decoration:none">Creature v0</a><span style="color:#2c3a4d">|</span><a href="findings.html" style="color:#6ea8ff;text-decoration:none">Findings</a></div><div id="wrap">
+</style></head><body><div id="sitenav" style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(10,16,24,.9);border:1px solid #2c3a4d;border-radius:8px;padding:5px 12px;font:12px system-ui;display:flex;gap:9px;align-items:center;flex-wrap:wrap;max-width:94vw"><a href="index.html" style="color:#6ea8ff;text-decoration:none">Creature</a><span style="color:#2c3a4d">|</span><span style="color:#eaf1fb;font-weight:600">Game Demos</span><span style="color:#2c3a4d">|</span><a href="organoid_lab.html" style="color:#6ea8ff;text-decoration:none">Lab</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer.html" style="color:#6ea8ff;text-decoration:none">Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_viewer_3d.html" style="color:#6ea8ff;text-decoration:none">3D Viewer</a><span style="color:#2c3a4d">|</span><a href="organoid_creature.html" style="color:#6ea8ff;text-decoration:none">Creature v0</a><span style="color:#2c3a4d">|</span><a href="findings.html" style="color:#6ea8ff;text-decoration:none">Findings</a><span style="color:#2c3a4d">|</span><a href="evolution_arena.html" style="color:#6ea8ff;text-decoration:none">Evo Arena</a></div><div id="wrap">
 <header>
  <h1>🧫🐛 Organoid Creature — Gamification Demos</h1>
  <div class="sub">Six directions, one engine. Switch modes to compare which foraging-brain game has the most legs.</div>
@@ -36,6 +36,7 @@
  <canvas id="arena"></canvas>
  <div id="panel"></div>
 </div></div>
+<script src="brain.js"></script>
 <script>
 // ============================================================================
 // SHARED ENGINE — a tiny embodied creature with a small rate-coded brain.
@@ -129,6 +130,48 @@ function mutate(g, rate){
 }
 
 // ============================================================================
+// FULL-BRAIN CREATURE  (used by the Evolution mode only; other modes keep the
+// fast rate-coded stub above). Same {x,y,h,score} interface as makeCreature so
+// drawBody/drawFood still work — but the "brain" is a real spiking organoid from
+// brain.js (Izhikevich · Dale · reward-gated STDP · homeostasis · metabolism),
+// just small (N=120). Body coupling constants are scaled up because a small
+// network's motor signals are correct but tiny.
+// ============================================================================
+const FB_TWEAKS={N:120,injMult:30,reflexScale:6};
+const FB_SPEED_BASE=0.0018, FB_SPEED_GAIN=0.5, FB_TURN=10;
+function makeFullCreature(genome){
+  const g = Object.assign(genome || BrainKit.randomGenome(), FB_TWEAKS);
+  return { x:0.5, y:0.5, h:rnd(0,6.28), hv:0, energy:100, tired:0, alive:true, score:0, speed:0,
+           genome:g, brain:new Brain(g) };
+}
+// two-antenna smell + wall + food-distance + hunger + fatigue → the 6 senses the brain expects
+function senseFull(c, food){
+  let L=0,R=0,nr=1e9;
+  for(const f of food){ const dx=f.x-c.x, dy=f.y-c.y, d=Math.hypot(dx,dy); if(d<nr)nr=d;
+    const r=d/0.35, it=1/(1+r*r), ang=Math.atan2(dy,dx)-c.h, a=Math.atan2(Math.sin(ang),Math.cos(ang));
+    L+=it*Math.max(0,Math.cos(a-0.6)); R+=it*Math.max(0,Math.cos(a+0.6)); }
+  L=1-Math.exp(-L); R=1-Math.exp(-R);
+  const wall=Math.max(0,1-Math.min(c.x,c.y,1-c.x,1-c.y)/0.15);
+  const fc=food.length?1/(1+(nr/0.3)**2):0;
+  return [L,R,wall,fc,1-c.energy/100,Math.min(1,c.tired)];
+}
+function stepFull(c, food){
+  const Mg=c.genome.motorGain;
+  const s=senseFull(c,food);
+  const [mL,mR]=c.brain.step(s);
+  const fwd=(mL+mR)/2; let sp=FB_SPEED_BASE+FB_SPEED_GAIN*fwd*Mg; if(sp<0)sp=0; if(sp>0.02)sp=0.02;
+  const tc=Math.atan2(0.5-c.y,0.5-c.x), dh=Math.atan2(Math.sin(tc-c.h),Math.cos(tc-c.h));
+  c.hv=c.hv*0.75+((mL-mR)*FB_TURN*Mg+dh*s[2]*0.3)*0.25; c.h+=c.hv;
+  c.x=clamp(c.x+Math.cos(c.h)*sp,0.03,0.97); c.y=clamp(c.y+Math.sin(c.h)*sp,0.03,0.97);
+  c.speed=sp;
+  for(let i=food.length-1;i>=0;i--){ const dx=food[i].x-c.x, dy=food[i].y-c.y;
+    if(dx*dx+dy*dy<0.001){ food.splice(i,1); c.score++; c.energy=Math.min(100,c.energy+25);
+      c.tired=Math.max(0,c.tired-0.04); food.push(spawnFood()); c.brain.reward(0.85); } }
+  c.energy=Math.max(0,c.energy-(0.03+2.0*sp+400*sp*sp)); // drains (feeds hunger sense) but no death in evo
+  c.tired=Math.max(0,Math.min(1,c.tired+sp*3-0.008));
+}
+
+// ============================================================================
 // MODE FRAMEWORK
 // ============================================================================
 let current=null, raf=null;
@@ -194,22 +237,22 @@ modes.survival = (()=>{
 // 2. EVOLUTION / BREEDING
 // ---------------------------------------------------------------------------
 modes.evolution = (()=>{
-  let pop, food, gen, genTime, GEN_LEN=600, best=0, hist, mutRate;
-  const POP=14;
+  let pop, food, gen, genTime, GEN_LEN=650, best=0, hist, mutRate;
+  const POP=14, SUB=2; // SUB = brain ticks simulated per animation frame
   function init(){
-    pop=[]; for(let i=0;i<POP;i++) pop.push(makeCreature(randomGenome()));
+    pop=[]; for(let i=0;i<POP;i++) pop.push(makeFullCreature());
     food=[]; for(let i=0;i<10;i++)food.push(spawnFood());
     gen=1; genTime=0; best=0; hist=[]; mutRate=0.3;
     panel.innerHTML=`<div class="mname">2 · Evolution / Breeding</div>
-     <div class="mdesc">${POP} creatures forage the same arena. Each generation, the best breed (with mutation) and reseed the population. Watch competence emerge from noise.</div>
+     <div class="mdesc">${POP} creatures forage the same arena — each is a real spiking organoid brain (Izhikevich · Dale · reward-gated STDP · homeostasis · metabolism), just small (N=120). Each generation the best breed with mutation; wiring and parameters are inherited. Watch competence emerge from noise.</div>
      <div class="vit"><span class="vk">Generation</span><span class="vv" id="e_gen">1</span></div>
      <div class="vit"><span class="vk">Best fitness ever</span><span class="vv" id="e_best">0</span></div>
      <div class="vit"><span class="vk">Gen leader</span><span class="vv" id="e_lead">0</span></div>
-     <div class="lab">Mutation rate <span class="val" id="e_mv">0.30</span></div><input type="range" id="e_mr" min="0" max="100" value="30">
+     <div class="lab">Mutation rate <span class="val" id="e_mv">0.30</span></div><input type="range" id="e_mr" min="2" max="80" value="30">
      <button id="e_skip">Force next generation</button>
      <canvas id="e_chart" width="276" height="70" style="margin-top:8px;background:#04070c;border:1px solid #16202e;border-radius:4px;display:block"></canvas>
-     <div class="potential">Potential: <span class="star">★★★★★</span> — mesmerizing and unique. The payoff (dumb → smart) is the whole pitch of "biological computing" made visible.</div>
-     <div class="hint">Green = well-fed, dim = struggling. Fitness = food eaten this generation.</div>`;
+     <div class="potential">Potential: <span class="star">★★★★★</span> — mesmerizing and unique. The payoff (dumb → smart) is the whole pitch of "biological computing" made visible — now with genuinely neural creatures.</div>
+     <div class="hint">Bright = well-fed, dim = struggling. Fitness = food eaten this generation. Full brains are heavier than the stub, so each generation takes a moment.</div>`;
     document.getElementById('e_mr').oninput=e=>{ mutRate=+e.target.value/100; document.getElementById('e_mv').textContent=mutRate.toFixed(2); };
     document.getElementById('e_skip').onclick=()=>{ genTime=GEN_LEN; };
   }
@@ -219,14 +262,15 @@ modes.evolution = (()=>{
     hist.push(pop[0].score); if(hist.length>60)hist.shift();
     const parents=pop.slice(0,4);
     const np=[];
-    np.push(makeCreature(parents[0].genome)); // keep champion
-    for(let i=1;i<POP;i++){ const p=parents[Math.floor(Math.random()*parents.length)]; np.push(makeCreature(mutate(p.genome,mutRate))); }
+    np.push(makeFullCreature(parents[0].genome));                       // keep champion's genome
+    for(let i=1;i<POP;i++){ const p=parents[Math.floor(Math.random()*parents.length)];
+      np.push(makeFullCreature(BrainKit.mutate(p.genome, mutRate))); }  // breed with mutation
     pop=np; gen++; genTime=0;
     food=[]; for(let i=0;i<10;i++)food.push(spawnFood());
   }
   function step(){
     genTime++;
-    for(const c of pop){ stepCreature(c,food,{}); eatCheck(c,food); }
+    for(let s=0;s<SUB;s++){ for(const c of pop) stepFull(c,food); }
     if(genTime>=GEN_LEN) nextGen();
   }
   function draw(){
