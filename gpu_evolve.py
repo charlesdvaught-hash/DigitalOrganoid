@@ -236,6 +236,36 @@ class BatchSim:
             fan_in_exc.index_add_(0, self.post_exc, torch.ones_like(self.post_exc, dtype=dtype))
         self.fan_in_exc = torch.clamp(fan_in_exc, min=1.0)
 
+        # ---- Task 13 candidate #4 (evolve-the-plasticity-rule): per-synapse
+        # pool-pair index (for gathering evolved per-pair Hebbian rates) and
+        # the topology's own fixed initial weight (used as the shared,
+        # non-evolved starting point for --learning evolverule). ----
+        pair_idx, n_pairs, pair_labels = build_pair_map(scaffold)
+        self.pair_idx = t(pair_idx, torch.long)
+        self.n_pairs = n_pairs
+        self.pair_labels = pair_labels
+        self.init_weight = t(scaffold['weight'][plastic])
+
+        # ---- Task 13 candidate A (evo-devo guidance-code wiring) ----
+        pool_id = build_pool_id(N)
+        self.pre_pool_id = t(pool_id[pre[plastic]], torch.long)
+        self.post_pool_id = t(pool_id[post[plastic]], torch.long)
+        self.n_pools = N_POOLS
+
+    def gate_weights(self, base_weight, guide_code, gain=4.0):
+        """base_weight: (n_plastic,) fixed sign+magnitude init (e.g.
+        self.init_weight). guide_code: (B, n_pools, code_dim), evolved.
+        Returns (B, n_plastic) gated initial weight: base_weight * sigmoid(
+        gain * dot(code[pre_pool], code[post_pool])) -- pools whose evolved
+        codes are compatible (high dot product) start strongly connected;
+        incompatible ones start near zero. gain=0 / code all-zero collapses
+        to gate=0.5 everywhere (symmetric, no bias -- the neutral start)."""
+        code_pre = guide_code[:, self.pre_pool_id, :]    # (B, n_plastic, code_dim)
+        code_post = guide_code[:, self.post_pool_id, :]
+        compat = (code_pre * code_post).sum(dim=-1)       # (B, n_plastic)
+        gate = torch.sigmoid(gain * compat)
+        return base_weight.unsqueeze(0) * gate
+
     def run(self, weight_plastic, T, reflex_scale, stdp_on=True, record_steering=False,
             learning='stdp', elig_decay=0.995, elig_lr=0.03, value_lr=0.02,
             eat_radius2=None, n_food=None, food_spawn_radius=None, metab_scale=1.0,
@@ -243,7 +273,7 @@ class BatchSim:
             fep_punish=False, fep_punish_t=150, fep_wall_thresh=0.7, fep_timeout_steps=800,
             homeo='mult', homeo_every=20, eh_lr=0.05, eh_bar_decay=0.8,
             cp_steps=10**9, cp_decay_len=1, cp_floor=1.0, fep_punish_gate_steps=0,
-            btsp_decay=0.999, btsp_lr=0.05):
+            btsp_decay=0.999, btsp_lr=0.05, rule_a_plus=None, rule_a_minus=None):
         """weight_plastic: (B, n_plastic) tensor, evolves in place and is
         returned updated. reflex_scale: python float, applied uniformly this
         lifetime (curriculum). Returns dict with food_eaten (B,) and, if
@@ -342,6 +372,15 @@ class BatchSim:
         fep = (learning == 'fep')
         eh = (learning == 'eh')
         btsp = (learning == 'btsp')
+        evolve_rule = (learning == 'evolverule')
+        if evolve_rule:
+            # Per-synapse Hebbian rates gathered once from the evolved
+            # per-pool-pair genome (rule_a_plus/rule_a_minus, each (B,
+            # n_pairs)) -- constant for the whole lifetime, unlike wp which
+            # evolves every step. Same plain-Hebbian math as 'fep', just
+            # A_PLUS/A_MINUS replaced by these gathered per-synapse values.
+            a_plus_syn = rule_a_plus[:, self.pair_idx]
+            a_minus_syn = rule_a_minus[:, self.pair_idx]
         eat_r2 = EAT_RADIUS2 if eat_radius2 is None else eat_radius2
         nf = N_FOOD if n_food is None else n_food
         if surprise:
@@ -511,7 +550,21 @@ class BatchSim:
             trace_pre = trace_pre + firef
             trace_post = trace_post + firef
 
-            if stdp_on and not surprise and not fep and not eh and not btsp:
+            if stdp_on and evolve_rule:
+                # Same plain, unmodulated Hebbian STDP as 'fep' (still
+                # consults cp_mult, a no-op unless --cp-steps is also set),
+                # but A_PLUS/A_MINUS are per-synapse values gathered from the
+                # evolved per-pool-pair genome instead of global constants.
+                pf = fired[:, self.post_p]
+                qf = fired[:, self.pre_p]
+                le = torch.minimum(energy[:, self.pre_p], energy[:, self.post_p])
+                wp = wp + a_plus_syn * cp_mult * trace_pre[:, self.pre_p] * le * pf.to(dt)
+                wp = wp - a_minus_syn * cp_mult * trace_post[:, self.post_p] * le * qf.to(dt)
+                wp = torch.where(self.exc_mask.unsqueeze(0),
+                                 torch.clamp(wp, 0.0, W_MAX),
+                                 torch.clamp(wp, -W_MAX, 0.0))
+
+            if stdp_on and not surprise and not fep and not eh and not btsp and not evolve_rule:
                 dopa_mult = (0.1 + dopamine * 4.0).unsqueeze(1)
                 pf = fired[:, self.post_p]
                 qf = fired[:, self.pre_p]
@@ -802,12 +855,91 @@ def compute_asym(genome, masks):
     return asym_L, asym_R
 
 
+# --------------------------------------------------------------------------- #
+# Task 13 candidate #4 (CANDIDATE_MECHANISMS.md #4, Najarro & Risi 2020):
+# evolve-the-plasticity-rule. Instead of evolving one value per plastic
+# synapse (~n_plastic genes, structurally able to memorize a layout-specific
+# weight pattern), evolve one Hebbian rate PAIR per (pre_pool, post_pool)
+# combination actually present in the topology (a couple hundred genes at
+# most) -- every synapse in the same pool-pair shares the same evolved
+# A_PLUS/A_MINUS, and the lifetime's own Hebbian dynamics (same math as
+# 'fep') expresses those rates into synaptic weights from a fixed, shared
+# starting point. Directly shrinks what evolution can overfit to.
+# --------------------------------------------------------------------------- #
+def pool_of_index(idx, pools):
+    for name, (lo, hi) in pools.items():
+        if lo <= idx < hi:
+            return name
+    return 'hid'
+
+
+def build_pair_map(scaffold):
+    """Returns (pair_idx, n_pairs, pair_labels). pair_idx is a (n_plastic,)
+    int array mapping each plastic synapse to an index into a de-duplicated
+    list of (pre_pool, post_pool) pairs actually present in this topology
+    (pair_labels, same order)."""
+    plastic = ~scaffold['is_reflex']
+    pre_p = scaffold['pre'][plastic]
+    post_p = scaffold['post'][plastic]
+    pre_pool = [pool_of_index(int(i), POOLS) for i in pre_p]
+    post_pool = [pool_of_index(int(i), POOLS) for i in post_p]
+    pairs = sorted(set(zip(pre_pool, post_pool)))
+    pair_to_idx = {p: i for i, p in enumerate(pairs)}
+    pair_idx = np.array([pair_to_idx[(a, b)] for a, b in zip(pre_pool, post_pool)], dtype=np.int64)
+    return pair_idx, len(pairs), pairs
+
+
+# --------------------------------------------------------------------------- #
+# Task 13 candidate A (evo-devo guidance-code wiring, Eph/ephrin-inspired):
+# instead of evolving a plasticity rate per pool-pair (#4), evolve a tiny
+# per-POOL "guidance code" vector (analogous to a receptor/ligand expression
+# level). Two candidate synapses connect strongly at the START of a lifetime
+# only if their pre/post pools' codes are compatible (high dot product) --
+# a compact, evolved, one-shot DEVELOPMENTAL gate applied before plasticity
+# ever runs, not a hardcoded L/R rule: evolution has to discover which pools'
+# codes should end up complementary, same as real axon guidance discovers
+# which growth cones follow which gradients. Topology (the candidate edge
+# list) stays exactly as built by build_scaffold_numpy/K-NN -- only the
+# per-synapse INITIAL weight magnitude (sign preserved) is gated, keeping
+# the batched-tensor architecture: one shared edge list, per-individual gate.
+# --------------------------------------------------------------------------- #
+POOL_NAMES = list(POOLS.keys()) + ['hid']
+POOL_NAME_TO_ID = {name: i for i, name in enumerate(POOL_NAMES)}
+N_POOLS = len(POOL_NAMES)
+
+
+def build_pool_id(N):
+    """(N,) int array: every neuron index -> its pool id (POOL_NAMES order)."""
+    return np.array([POOL_NAME_TO_ID[pool_of_index(i, POOLS)] for i in range(N)], dtype=np.int64)
+
+
 def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=False):
     """One genome-batch's full lifetime: optional bootcamp phase (easy,
     dense-reward, annealed exploration -- shapes weights) followed by the
     real (scored) phase at normal difficulty. Only the real phase's
-    food_eaten/steering counts for fitness -- bootcamp food doesn't."""
-    wp = weight_plastic
+    food_eaten/steering counts for fitness -- bootcamp food doesn't.
+
+    For --learning evolverule, `weight_plastic` is NOT a per-synapse weight
+    tensor -- it's the evolved genome batch (B, 2*n_pairs) of per-pool-pair
+    Hebbian rates. The actual synaptic weights (wp) start instead from the
+    topology's own fixed init_weight (shared, non-evolved), and the rates
+    are gathered per-synapse inside sim.run() via rule_a_plus/rule_a_minus."""
+    evolve_rule = (args.learning == 'evolverule')
+    wiring_guide = (args.wiring == 'guide')
+    rule_kw = {}
+    if evolve_rule:
+        genome_batch = weight_plastic
+        B = genome_batch.shape[0]
+        wp = sim.init_weight.unsqueeze(0).expand(B, -1).clone()
+        rule_kw = dict(rule_a_plus=genome_batch[:, :sim.n_pairs],
+                       rule_a_minus=genome_batch[:, sim.n_pairs:])
+    elif wiring_guide:
+        genome_batch = weight_plastic
+        B = genome_batch.shape[0]
+        guide_code = genome_batch.view(B, sim.n_pools, -1)
+        wp = sim.gate_weights(sim.init_weight, guide_code, gain=args.guide_gain)
+    else:
+        wp = weight_plastic
     fep_kw = dict(fep_punish=args.fep_punish, fep_punish_t=args.fep_punish_t,
                   fep_wall_thresh=args.fep_wall_thresh, fep_timeout_steps=args.fep_timeout_steps,
                   fep_punish_gate_steps=args.fep_punish_gate_steps)
@@ -825,12 +957,12 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
                            motor_noise_start=args.boot_noise_start,
                            motor_noise_end=args.boot_noise_end,
                            use_eye=args.use_eye, **fep_kw, **homeo_kw, **eh_kw,
-                           **cp_kw, **btsp_kw)
+                           **cp_kw, **btsp_kw, **rule_kw)
         wp = boot_out['weight_plastic']
     return sim.run(wp, T, reflex_scale, stdp_on=True, record_steering=record_steering,
                    learning=args.learning, elig_decay=args.elig_decay,
                    elig_lr=args.elig_lr, value_lr=args.value_lr, use_eye=args.use_eye,
-                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw)
+                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw, **rule_kw)
 
 
 def main():
@@ -854,12 +986,38 @@ def main():
     ap.add_argument('--out', type=str, default='champion_gpu_curriculum.npy')
     ap.add_argument('--dense-k', type=int, default=0,
                     help='extra plastic sensor->motor synapses per motor neuron (round 2 scaffold)')
-    ap.add_argument('--learning', type=str, default='stdp', choices=['stdp', 'surprise', 'fep', 'eh', 'btsp'],
+    ap.add_argument('--learning', type=str, default='stdp',
+                    choices=['stdp', 'surprise', 'fep', 'eh', 'btsp', 'evolverule'],
                     help='stdp = reward-gated instantaneous STDP; surprise = eligibility x TD-error; '
                          'fep = plain unmodulated Hebbian STDP, pair with --fep-punish; '
                          'eh = exploratory Hebbian, signed postsynaptic-fluctuation x reward-fluctuation '
                          "(CANDIDATE_MECHANISMS.md #1); btsp = event-gated behavioural-timescale "
-                         'eligibility, applied only on eat events (CANDIDATE_MECHANISMS.md #3/B2)')
+                         'eligibility, applied only on eat events (CANDIDATE_MECHANISMS.md #3/B2); '
+                         'evolverule = evolve per-pool-pair Hebbian rates instead of per-synapse '
+                         'weights (CANDIDATE_MECHANISMS.md #4, Najarro & Risi)')
+    ap.add_argument('--rule-rate-max', type=float, default=0.05,
+                    help="learning='evolverule' only: upper bound on evolved per-pair A_PLUS/A_MINUS "
+                         '(genes init at the fep defaults, 0.008/0.010)')
+    ap.add_argument('--wiring', type=str, default='none', choices=['none', 'guide'],
+                    help='none = unchanged (per-synapse weight genome, as picked by --learning). '
+                         'guide = evo-devo guidance-code wiring (CANDIDATE_MECHANISMS.md #A, '
+                         'Eph/ephrin-inspired): genome becomes a tiny per-POOL code vector instead '
+                         'of per-synapse weights; initial synaptic weight = fixed topology magnitude '
+                         '* sigmoid(gain * code_pre . code_post), applied once before the lifetime, '
+                         'then --learning plasticity runs on top as normal. Not combinable with '
+                         "--learning evolverule (both replace the weight-init source).")
+    ap.add_argument('--guide-code-dim', type=int, default=3,
+                    help="--wiring guide only: dimensionality of each pool's evolved guidance code")
+    ap.add_argument('--guide-gain', type=float, default=4.0,
+                    help="--wiring guide only: sigmoid gain on the code dot-product "
+                         '(higher = sharper connect/prune boundary)')
+    ap.add_argument('--fitness-r-weight', type=float, default=0.0,
+                    help='if > 0, TRAINING fitness = food + this * max(0, steering_r) instead of '
+                         'food alone -- selects directly for positive linear L-R steering '
+                         'correlation, not just food count (Task 14 follow-up: candidate #4 roughly '
+                         "doubled food but didn't reliably build positive steering; this pushes "
+                         'selection toward the metric this project actually cares about). Default '
+                         '0.0 = unchanged (food-only fitness, every prior task).')
     ap.add_argument('--elig-decay', type=float, default=0.995)
     ap.add_argument('--elig-lr', type=float, default=0.03)
     ap.add_argument('--value-lr', type=float, default=0.02)
@@ -929,16 +1087,34 @@ def main():
 
     scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k)
     sim = BatchSim(scaffold, device)
-    n_genes = sim.n_plastic
-    print(f'genes (plastic synapses): {n_genes}', flush=True)
     asym_masks = build_asym_masks(scaffold)
+    evolve_rule = (args.learning == 'evolverule')
+    wiring_guide = (args.wiring == 'guide')
+    if evolve_rule and wiring_guide:
+        raise SystemExit("--learning evolverule and --wiring guide both replace the weight-init "
+                          "source and are not combinable yet -- pick one.")
 
-    plastic = ~scaffold['is_reflex']
-    types = scaffold['types']; pre = scaffold['pre']
-    exc = types[pre][plastic] > 0
-    lo = np.where(exc, 0.0, -W_MAX)
-    hi = np.where(exc, W_MAX, 0.0)
-    base_genome = scaffold['weight'][plastic].copy()
+    if wiring_guide:
+        n_genes = sim.n_pools * args.guide_code_dim
+        print(f'genes (guidance codes, {sim.n_pools} pools x {args.guide_code_dim}-dim): {n_genes}', flush=True)
+        lo = np.full(n_genes, -3.0)
+        hi = np.full(n_genes, 3.0)
+        base_genome = np.zeros(n_genes)  # neutral start: gate=0.5 everywhere
+    elif evolve_rule:
+        n_genes = 2 * sim.n_pairs
+        print(f'genes (plasticity-rule coefficients, {sim.n_pairs} pool-pairs): {n_genes}', flush=True)
+        lo = np.zeros(n_genes)
+        hi = np.full(n_genes, args.rule_rate_max)
+        base_genome = np.concatenate([np.full(sim.n_pairs, A_PLUS), np.full(sim.n_pairs, A_MINUS)])
+    else:
+        n_genes = sim.n_plastic
+        print(f'genes (plastic synapses): {n_genes}', flush=True)
+        plastic = ~scaffold['is_reflex']
+        types = scaffold['types']; pre = scaffold['pre']
+        exc = types[pre][plastic] > 0
+        lo = np.where(exc, 0.0, -W_MAX)
+        hi = np.where(exc, W_MAX, 0.0)
+        base_genome = scaffold['weight'][plastic].copy()
 
     rng = np.random.default_rng(0)
     pop = [base_genome.copy()]
@@ -962,21 +1138,45 @@ def main():
         P = pop_t.shape[0]
         batch_w = pop_t.repeat_interleave(S, dim=0)  # (P*S, E)
 
-        out = run_lifetime(sim, batch_w, args, reflex_scale, args.train_t)
+        use_r_fitness = args.fitness_r_weight > 0
+        out = run_lifetime(sim, batch_w, args, reflex_scale, args.train_t,
+                           record_steering=use_r_fitness)
         food = out['food_eaten'].view(P, S).mean(dim=1).cpu().numpy()
+        if use_r_fitness:
+            # Task 14 follow-up: select directly on (food + bonus for
+            # positive linear steering correlation), not food alone -- #4
+            # roughly doubled food without reliably building positive r;
+            # this pushes selection toward the metric the project cares
+            # about instead of letting it wander to whatever high-food
+            # strategy it finds first.
+            r_train = steering_correlation(out['dL'], out['dM']).reshape(P, S).mean(axis=1)
+            fitness = food + args.fitness_r_weight * np.clip(r_train, 0.0, None)
+        else:
+            r_train = None
+            fitness = food
 
-        order = np.argsort(-food)
+        order = np.argsort(-fitness)
         ranked = [pop[i] for i in order]
         scored_food = food[order]
-        best_fit = float(scored_food[0])
-        mean_fit = float(food.mean())
+        best_fit = float(fitness[order[0]])
+        mean_fit = float(fitness.mean())
         if best_fit > champion_fit:
             champion_fit = best_fit
             champion = ranked[0].copy()
 
-        asym_L, asym_R = compute_asym(ranked[0], asym_masks)
+        if evolve_rule or wiring_guide:
+            # Genome here is rule coefficients or guidance codes, not
+            # weights -- asym has to be measured on the EXPRESSED weights
+            # this individual's own Hebbian dynamics produced this lifetime,
+            # not the genome itself.
+            wp_expressed = out['weight_plastic'][order[0] * S].detach().cpu().numpy()
+            asym_L, asym_R = compute_asym(wp_expressed, asym_masks)
+        else:
+            asym_L, asym_R = compute_asym(ranked[0], asym_masks)
+        r_note = f'  r_train {r_train[order[0]]:+.4f}' if use_r_fitness else ''
         print(f'gen {gen:3d}  reflex_scale {reflex_scale:.2f}  best {best_fit:6.2f}  '
               f'mean {mean_fit:6.2f}  champion-so-far {champion_fit:6.2f}  '
+              f'food {scored_food[0]:6.2f}{r_note}  '
               f'asym_L {asym_L:+.4f}  asym_R {asym_R:+.4f}  '
               f't={time.time()-t0:6.1f}s', flush=True)
 
@@ -986,15 +1186,23 @@ def main():
     np.save(args.out, champion)
     print(f'\nchampion saved to {args.out}', flush=True)
 
-    champ_asym_L, champ_asym_R = compute_asym(champion, asym_masks)
-    print(f'champion asym_L (sL->mL minus sL->mR): {champ_asym_L:+.4f}')
-    print(f'champion asym_R (sR->mR minus sR->mL): {champ_asym_R:+.4f}')
+    if not (evolve_rule or wiring_guide):
+        champ_asym_L, champ_asym_R = compute_asym(champion, asym_masks)
+        print(f'champion asym_L (sL->mL minus sL->mR): {champ_asym_L:+.4f}')
+        print(f'champion asym_R (sR->mR minus sR->mL): {champ_asym_R:+.4f}')
 
     # Held-out evaluation at reflex_scale=0.0 (the real no-reflex test) plus a
     # steering-correlation check on the same held-out champion.
     champ_t = torch.tensor(champion, dtype=torch.float32, device=device).unsqueeze(0)
     champ_batch = champ_t.repeat(args.heldout_seeds, 1)
     out = run_lifetime(sim, champ_batch, args, reflex_scale=0.0, T=args.heldout_t, record_steering=True)
+    if evolve_rule or wiring_guide:
+        # Asym on the champion's EXPRESSED weights from this held-out
+        # lifetime (genome is rule coefficients, not weights -- see above).
+        wp_expressed = out['weight_plastic'][0].detach().cpu().numpy()
+        champ_asym_L, champ_asym_R = compute_asym(wp_expressed, asym_masks)
+        print(f'champion asym_L (sL->mL minus sL->mR, expressed weights): {champ_asym_L:+.4f}')
+        print(f'champion asym_R (sR->mR minus sR->mL, expressed weights): {champ_asym_R:+.4f}')
     foods = out['food_eaten'].cpu().numpy()
     r = steering_correlation(out['dL'], out['dM'])
     print(f'\nFINAL held-out ({args.heldout_seeds} seeds, T={args.heldout_t}, reflex=0): '

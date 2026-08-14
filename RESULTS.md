@@ -1138,3 +1138,111 @@ directly targets the fitness-gaming/overfitting axis Dave flagged (Task 13's
 protocol correction) by shrinking the search space evolution can overfit to.
 
 **Status:** `champion_gpu_curriculum.npy`/`run_btsp_seed42.log`.
+
+## Task 14 — candidate #4: evolve-the-plasticity-rule (Najarro & Risi)
+
+Shortlist items 0-3 exhausted (Task 13); per Dave's "do 3 then 4," implemented
+candidate #4: instead of evolving ~6000 per-synapse weights directly, evolve
+a genome of per-`(pre_pool, post_pool)`-pair Hebbian rate coefficients (100
+pool-pairs x 2 = 200 genes for this topology, vs. ~6000 before) — every
+synapse sharing a pool-pair shares the same evolved A_PLUS/A_MINUS, and the
+lifetime's own unmodulated Hebbian dynamics (same math as `fep`) expresses
+those rates into actual synaptic weights from a fixed, shared starting
+point. `--learning evolverule`, `--train-seeds 8`.
+
+| variant | held-out food | steering r (smell), mean | positive seeds |
+|---|---|---|---|
+| baseline (Task 9, seed 42) | 7.75 ± 2.07 | 0.080 | 6/8 |
+| evolverule, seed 42 | **12.62 ± 2.20** | -0.267 | 1/8 |
+| evolverule, seed 7 (replication) | **18.12 ± 2.48** | -0.035 | 3/8 |
+
+**Food count roughly doubled baseline on both topologies** — by far the
+largest food-count gain of any mechanism tried this project. But steering
+correlation did NOT replicate: seed 42 showed a strong, consistent NEGATIVE
+correlation (7/8 seeds negative, r=-0.267 — initially read as a real,
+if backwards, differential pathway); seed 7 showed a much weaker, mixed-sign
+result (3/8 positive, 5/8 negative, r=-0.035, indistinguishable from noise).
+**The strong negative correlation on seed 42 does not replicate as a stable
+property of the mechanism** — it was topology-specific, not something
+candidate #4 reliably builds.
+
+**Reading:** candidate #4 is very good at *food count* — likely via
+nonlinear/threshold or speed-modulation strategies the linear steering-r
+metric doesn't capture (the "lucky/efficient wanderer" pattern flagged
+before, just a much more effective wanderer than any prior mechanism) —
+but does not reliably build genuine linear L-R steering in either
+direction. The pool-pair-rate genome does break symmetry hard (asym
+magnitudes up to +/-2.4, dwarfing every Task 13 candidate's +/-0.1-0.3),
+it just doesn't consistently point the differential pathway toward smell
+gradient-following specifically.
+
+**Status:** `champion_gpu_curriculum.npy`/`run_evolverule_seed42.log`,
+`champion_evolverule_seed7.npy`/`run_evolverule_seed7.log`.
+
+## Task 15 — candidate A: evo-devo guidance-code wiring (Dave's idea)
+
+Dave proposed a developmental alternative to evolving plasticity rates or
+weights: evolve a compact "wiring rule" that grows connectivity
+asymmetrically before the lifetime starts, the way real axon guidance uses
+molecular gradients (Eph/ephrin-style receptor-ligand codes), not a
+hardcoded L/R spatial rule. Implemented as `--wiring guide`: genome becomes
+a tiny per-POOL guidance code vector (10 pools x 3 dims = 30 genes, smaller
+than either #3 or #4's genomes); at the start of each lifetime, initial
+synaptic weight = the topology's fixed baked-in magnitude x
+sigmoid(gain x dot(code_pre_pool, code_post_pool)) — pools whose evolved
+codes are compatible start strongly connected, incompatible ones start
+near zero. Topology (the candidate edge list) is untouched — only the
+per-synapse initial weight is gated, so the batched-tensor architecture
+(one shared edge list across the whole population) is preserved. Plasticity
+(`--learning fep --fep-punish`, matching baseline) then runs on top as
+normal. Confirmed a true no-op at `--wiring none` via a seeded A/B test
+before running.
+
+| variant | held-out food | steering r (smell), mean | positive seeds |
+|---|---|---|---|
+| baseline (Task 9) | 7.75 ± 2.07 | 0.080 | 6/8 |
+| `--wiring guide` (first test, seed 42) | 2.25 ± 0.70 | 0.002 | 5/8 |
+
+Does not beat baseline — food count is well below baseline too (2.25 vs.
+7.75), suggesting the neutral start (`gate=0.5` for un-evolved codes) plus
+only 60 generations wasn't enough for such a low-dimensional, indirect
+genome (codes affect connectivity strength, not behavior directly) to find
+a useful configuration yet. Unlike #4, this is a genuinely novel mechanism
+with only one data point so far — worth more generations or a wider gain
+sweep before ruling it out, unlike the Task 13 candidates which had clear
+same-order in-life-plasticity comparisons.
+
+**Status:** `champion_wiringguide_seed42.npy`/`run_wiringguide_seed42.log`.
+
+## Task 14 follow-up — r-aware fitness does not fix it (overfits, doesn't generalize)
+
+Candidate #4 roughly doubled food without reliably building positive
+steering (Task 14). Hypothesis: food-only fitness lets evolution wander to
+whatever high-food strategy it finds first, ignoring steering entirely.
+Fix tried: add a direct reward for positive steering correlation to
+TRAINING fitness -- `fitness = food + 20 * max(0, r_train)`, r_train
+computed from the same 8 training seeds each generation (`--fitness-r-weight
+20`). `--learning evolverule`, seed 42.
+
+During training the bonus worked exactly as intended -- r_train on the
+selected champion was +0.17 to +0.20 by generation 2, far above baseline's
+final 0.080. **But held-out (different, unseen seeds): food 17.00 ± 3.78
+(highest food count on record), steering r = -0.038, mixed sign (3/8
+positive, 5/8 negative)** -- statistically indistinguishable from plain
+evolverule without the bonus (Task 14: r=-0.267 seed42, r=-0.035 seed7).
+
+**Reading:** the r bonus optimized r on the 8 specific training food
+layouts it was scored against, and that gain did NOT transfer to unseen
+layouts -- the same fitness-gaming pattern Dave flagged for food count
+(Task 13's `--train-seeds` protocol fix) is recurring for steering
+correlation itself. 8 training seeds may simply be too few to get a
+reliable, generalizable r estimate every generation (each one is only
+~6000 steps of noisy behavior), unlike food count which averages out
+better. Reward-shaping the training objective directly is not a working
+fix on its own; the underlying issue looks more structural -- candidate #4
+excels at food-seeking through some strategy the linear steering-r metric
+can't see (nonlinear/threshold response, speed modulation, or something
+else), and nothing tried so far converts that into metric-visible linear
+L-R steering.
+
+**Status:** `champion_evolverule_rfit_seed42.npy`/`run_evolverule_rfit_seed42.log`.
