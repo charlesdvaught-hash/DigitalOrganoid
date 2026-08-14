@@ -1,18 +1,39 @@
 # DigitalOrganoid — session handoff (Aug 14 2026)
 
 ## Where things stand right now
-Candidate #3 (critical-period gating + event-gated eligibility +
-punishment-timing gate) is fully closed out as of this handoff — none of its
-three sub-tests beat the Task 9 FEP baseline. That exhausts
-`CANDIDATE_MECHANISMS.md` shortlist items 0-3. RESULTS.md and this file are
-up to date and committed locally on the PC (commit `0086fe8`), **not yet
-pushed to GitHub** — the cloud session can't push (403, repo not in its
-authorized set); push from the PC checkout when convenient.
+Shortlist items 0-4 of `CANDIDATE_MECHANISMS.md` are now all closed out,
+plus one Dave-proposed candidate (evo-devo guidance-code wiring). **None
+beat the Task 9 FEP baseline's steering correlation (r=0.080/0.041, seed
+42/seed 7).** Task 9 remains the best-validated mechanism on record.
 
-**Candidate #4 (evolve-the-plasticity-rule) has NOT been started.** Per
-Dave's "do 3 then 4," it's next up, but no code has been written for it yet
-— paused before implementation began. See "Immediate next step" below for
-what it involves.
+**Candidate #4 (evolve-the-plasticity-rule)** roughly doubles food count on
+both topologies (huge effect, biggest of the project) but does NOT reliably
+build steering correlation — seed 42 showed strong negative r (-0.267) that
+did not replicate on seed 7 (r=-0.035, noise). Adding a direct r-bonus to
+training fitness fixed r on training seeds but did not transfer to held-out
+seeds (overfitting).
+
+**Candidate A (evo-devo guidance-code wiring, Dave's idea)** — one data
+point so far, below baseline on both food and r; inconclusive, not
+disproven (low-dimensional genome may just need more generations).
+
+**Big open question this session tried and failed to answer:** is
+candidate #4's food-count gain genuine hunting behavior or a "lucky
+wanderer" effect? Built four increasingly careful behavioral metrics
+(`approach_frac` → 200-step net-approach → `long_range_correlation` →
+`hunt_score` → `hunt_score_v2`); the first was tautological (caught by
+Dave), and the last two — the ones meant to be rigorous — both failed a
+null control: **random, untrained, no-learning weights score the same as
+every evolved champion**, including the Task 9 baseline. Conclusion:
+steering correlation remains the ONLY metric in this project that reliably
+discriminates trained from untrained behavior. Do not trust food count, or
+any of the distance/hunt-based metrics built this session, as evidence of
+real foraging competence without also checking steering r. Full
+investigation, per-metric detail: RESULTS.md Task 16.
+
+RESULTS.md and this file are up to date and committed locally on the PC —
+**push to GitHub still needed**, the cloud session can't push (403, repo
+not in its authorized set); push from the PC checkout when convenient.
 
 ## Project
 "Digital life simulator": Izhikevich SNN brain (Dale's principle, STDP,
@@ -78,6 +99,11 @@ Defaults: `--fep-punish-t 150 --fep-wall-thresh 0.7 --fep-timeout-steps 800`.
 | 13c-i | `--fep-punish-gate-steps 1000` (timing gate) | 6.12±1.46 | 0.006 | worse |
 | 13c-ii | critical-period gating (`--cp-*`) | 5.12±1.27 | -0.022 | worse on both metrics |
 | 13c-iii | standalone `--learning btsp` (event-gated elig.) | 6.12±1.01 | 0.014 | worse, but 7/8 positive (most consistent sign) |
+| 14 | `--learning evolverule` (candidate #4), seed42 | 12.62±2.20 | -0.267 | food ~2x, r doesn't replicate |
+| 14 | `--learning evolverule`, seed7 (replication) | 18.12±2.48 | -0.035 | negative r was topology-specific noise |
+| 14fu | evolverule + r-aware fitness bonus | 17.00±3.78 | -0.038 | r-bonus overfits to training seeds |
+| 15 | `--wiring guide` (candidate A, Dave's idea) | 2.25±0.70 | 0.002 | 1 data point, inconclusive |
+| 16 | behavioral metrics for #4's food gain | — | — | all 4 tried are tautological or fail null control |
 
 **Diagnosis behind Task 13** (from `CANDIDATE_MECHANISMS.md`): the plasticity
 rule is left/right symmetric — every `sL` neuron gets identical injection,
@@ -95,41 +121,23 @@ btsp (13c-iii) showed weak positive movement worth remembering if candidate
 Full per-task detail, per-seed numbers, and run-artifact filenames are in
 `RESULTS.md`.
 
-## Immediate next step: candidate #4 — evolve-the-plasticity-rule (not started)
-Najarro & Risi-style: instead of evolving ~6000 per-synapse weights directly
-(what every mechanism above still does), evolve a much smaller genome — per
-`(pre_pool, post_pool)` pair Hebbian rate coefficients (roughly ~80-200
-values depending on how many distinct pool-pairs the topology actually has,
-vs. ~6000 synapses) — that each individual's own lifetime Hebbian/STDP
-dynamics then expresses into synaptic weights from a fixed/shared starting
-point. This directly targets the fitness-gaming/overfitting axis Dave
-flagged in Task 13 (evolution memorizing layout-specific synaptic patterns)
-by shrinking what evolution can actually overfit to.
-
-Sketch of the implementation (scoped but not written):
-1. `build_pair_map(scaffold)`: for every plastic synapse, tag it with a
-   `(pre_pool, post_pool)` pair (pools = the existing `POOLS` dict plus a
-   catch-all `'hid'` for interneurons); assign each distinct pair observed
-   in the topology an index. This becomes a new `pair_idx` tensor on
-   `BatchSim`, plus `n_pairs`.
-2. New `--learning evolverule` mode: genome becomes
-   `2 * n_pairs` values (`A_PLUS`/`A_MINUS` per pair, in place of per-synapse
-   weights). Bounds/init need their own CLI knob (e.g. `--rule-rate-max`).
-3. Synaptic weights (`wp`) no longer come from the genome — they start from
-   a fixed, shared initial value (the scaffold's own baked-in init weight)
-   and evolve during the lifetime via plain Hebbian STDP, same math as the
-   `fep` branch, but with `A_PLUS`/`A_MINUS` gathered per-synapse from the
-   evolved per-pair genome instead of the two global constants.
-4. `run_lifetime()`/`main()` need a branch: for `evolverule`, the "genome
-   batch" passed around is the rule-coefficient array, not the weight array
-   — construct the actual `wp` tensor from `sim`'s fixed init weight
-   separately, and pass the rule coefficients through to `sim.run()` as new
-   kwargs (`rule_a_plus`, `rule_a_minus`).
-5. The `asym` diagnostic doesn't apply directly to the genome anymore (it's
-   not a weight array) — needs to run on the *expressed* weights after a
-   lifetime instead (e.g. captured from the held-out champion's final `wp`).
-
-None of this is committed to `gpu_evolve.py` yet — start here.
+## Immediate next step: not decided yet — options on the table
+No committed direction. Candidates, roughly in order of how much groundwork
+is already done:
+1. **Push candidate A (wiring-guide) further** — only 1 data point (Task
+   15), below baseline, but genuinely novel and low-dimensional (30 genes);
+   more generations or a gain sweep before ruling it out.
+2. **Third-topology replication of Task 9 baseline** — currently 2/2
+   positive (seed 42, seed 7); a seed-13 or similar run would raise
+   confidence it's not itself a topology-specific fluke.
+3. **Scale-up Task 9 baseline** — bigger pop/more generations, unknown if
+   it plateaus or keeps climbing past pop48/gens60.
+4. **FEP + eye pool** (`--use-eye`) — untested; Task 8's null result used
+   `stdp` mode, may not generalize to FEP's plain-Hebbian rule.
+5. **Resolve the Task 16 metric mystery properly** — if worth the time,
+   the unexplained part (random weights matching every evolved champion on
+   hunt-style metrics, even after the wall-avoidance-reflex fix) may point
+   at something about the environment itself, not just the metric.
 
 ## Lower-priority backlog, not yet touched
 - **FEP + eye pool** (`--use-eye`) — untested. Task 8's null result on

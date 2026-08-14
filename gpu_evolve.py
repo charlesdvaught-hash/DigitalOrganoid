@@ -445,6 +445,8 @@ class BatchSim:
         dL_hist = [] if record_steering else None
         dM_hist = [] if record_steering else None
         dEye_hist = [] if (record_steering and use_eye) else None
+        near_hist = [] if record_steering else None
+        hits_hist = [] if record_steering else None
 
         for t in range(T):
             dx = food[:, :, 0] - cx.unsqueeze(1)
@@ -690,6 +692,7 @@ class BatchSim:
             if record_steering:
                 dL_hist.append((L - R).detach())
                 dM_hist.append((mL - mR).detach())
+                near_hist.append(nearest.detach())
                 if use_eye:
                     half = N_EYE // 2
                     dEye_hist.append((eye_sig[:, :half].mean(dim=1) - eye_sig[:, half:].mean(dim=1)).detach())
@@ -713,6 +716,8 @@ class BatchSim:
             dyh = food[:, :, 1] - cy.unsqueeze(1)
             hit = (dxh * dxh + dyh * dyh < eat_r2) & alive.unsqueeze(1)
             hits = hit.sum(dim=1).to(dt)
+            if record_steering:
+                hits_hist.append(hits.detach())
 
             if stdp_on and btsp:
                 # BTSP event-gated application: on rows that just ate,
@@ -753,6 +758,8 @@ class BatchSim:
         if record_steering:
             out['dL'] = torch.stack(dL_hist, dim=0)   # (T, B)
             out['dM'] = torch.stack(dM_hist, dim=0)
+            out['nearest'] = torch.stack(near_hist, dim=0)   # (T, B), distance to nearest food
+            out['hits'] = torch.stack(hits_hist, dim=0)      # (T, B), food-eat events per step
             if use_eye:
                 out['dEye'] = torch.stack(dEye_hist, dim=0)
         return out
@@ -800,6 +807,75 @@ def steering_correlation(dL, dM):
     num = (dL * dM).sum(dim=0)
     den = torch.sqrt((dL * dL).sum(dim=0) * (dM * dM).sum(dim=0)) + 1e-9
     return (num / den).cpu().numpy()
+
+
+def long_range_correlation(dL, nearest, W=150):
+    """Task 14 follow-up: outcome-based, long-horizon steering metric.
+    steering_correlation measures instantaneous linear coupling between
+    sensor asymmetry and motor asymmetry -- it's blind to mechanisms that
+    achieve real approach through an indirect or delayed route (speed
+    modulation, multi-step heading correction), which candidate #4's
+    champions turned out to use (confirmed via a food-doesn't-move-controlled
+    trajectory analysis: net distance-to-food closed over 200-step windows
+    ending at eat events was strongly positive vs. ~zero for random windows
+    in the same trajectory, even though instantaneous steering_correlation
+    was near zero or negative for those same champions).
+
+    dL: (T, B) sensor L-R asymmetry (same as steering_correlation).
+    nearest: (T, B) distance to nearest food each step.
+    W: window length in steps.
+
+    Returns per-batch Pearson r between dL(t) and the NET DISTANCE CLOSED
+    over the following W steps (nearest[t] - nearest[t+W], positive =
+    got closer) -- directly measures "does stronger smell asymmetry now
+    predict real approach progress over the next W steps", independent of
+    *how* the network achieves it. Caveat: food teleports to a new random
+    location on each eat event, so windows spanning an eat event mix two
+    different food targets -- a real but bounded source of noise this
+    metric doesn't correct for."""
+    T = dL.shape[0]
+    if T <= W:
+        return np.full(dL.shape[1], np.nan)
+    delta_near = (nearest[:-W] - nearest[W:]).detach()   # (T-W, B), + = closer
+    dl = dL[:-W].detach()
+    dl = dl - dl.mean(dim=0, keepdim=True)
+    dn = delta_near - delta_near.mean(dim=0, keepdim=True)
+    num = (dl * dn).sum(dim=0)
+    den = torch.sqrt((dl * dl).sum(dim=0) * (dn * dn).sum(dim=0)) + 1e-9
+    return (num / den).cpu().numpy()
+
+
+def hunt_score(nearest, hits, W=200, seed=0):
+    """Task 14 follow-up, eat-event-conditioned version. long_range_correlation
+    correlates sensor asymmetry against future approach at every single step,
+    which turned out too diluted by non-approach time to pick up the real
+    signal. This instead asks the direct behavioral question: over the W
+    steps immediately before each successful eat, how much closer did the
+    creature get to that food, compared to a food-doesn't-move-controlled
+    null (the same trajectory's own random W-step windows, unrelated to any
+    eat event -- an undirected walk should show ~zero net approach there,
+    so this isolates genuine directed approach from the trivial "must be
+    close to eat" effect a naive pre-eat-only check would conflate with it).
+
+    nearest, hits: (T, B) torch tensors from a record_steering=True run.
+    Returns (B,) numpy: mean(pre-eat net approach) - mean(null net approach),
+    in arena-distance units (0-1 scale). Positive = real approach signal
+    beyond chance; ~0 = no directed approach detectable at this timescale."""
+    near = nearest.detach().cpu().numpy()
+    hit_arr = hits.detach().cpu().numpy()
+    T, B = near.shape
+    rng = np.random.default_rng(seed)
+    out = np.full(B, np.nan)
+    for b in range(B):
+        eat_steps = np.flatnonzero(hit_arr[:, b] > 0)
+        pre = [near[hi - W, b] - near[hi - 1, b] for hi in eat_steps if hi - W > 0]
+        if not pre:
+            continue
+        n_null = max(len(pre), 1) * 5
+        starts = rng.integers(0, max(1, T - W), size=n_null)
+        null = [near[s, b] - near[s + W - 1, b] for s in starts]
+        out[b] = float(np.mean(pre) - np.mean(null))
+    return out
 
 
 def oracle(T, seed, speed=0.0009):
@@ -1018,6 +1094,12 @@ def main():
                          "doubled food but didn't reliably build positive steering; this pushes "
                          'selection toward the metric this project actually cares about). Default '
                          '0.0 = unchanged (food-only fitness, every prior task).')
+    ap.add_argument('--long-window', type=int, default=150,
+                    help='window (steps) for the long-range steering correlation reported '
+                         'alongside the standard (instantaneous) one on the held-out champion -- '
+                         'correlates sensor L-R asymmetry now against NET distance-to-food closed '
+                         'over the following W steps, catching delayed/indirect approach the '
+                         'instantaneous metric misses (Task 14 follow-up).')
     ap.add_argument('--elig-decay', type=float, default=0.995)
     ap.add_argument('--elig-lr', type=float, default=0.03)
     ap.add_argument('--value-lr', type=float, default=0.02)
@@ -1205,11 +1287,18 @@ def main():
         print(f'champion asym_R (sR->mR minus sR->mL, expressed weights): {champ_asym_R:+.4f}')
     foods = out['food_eaten'].cpu().numpy()
     r = steering_correlation(out['dL'], out['dM'])
+    r_long = long_range_correlation(out['dL'], out['nearest'], W=args.long_window)
     print(f'\nFINAL held-out ({args.heldout_seeds} seeds, T={args.heldout_t}, reflex=0): '
           f'food {foods.mean():.2f} +/- {foods.std()/math.sqrt(len(foods)):.2f}')
     print(f'per-seed food: {list(foods)}')
     print(f'steering correlation (smell), per-seed: {list(np.round(r, 3))}')
     print(f'steering correlation (smell), mean: {r.mean():.3f}')
+    print(f'long-range steering correlation (smell, W={args.long_window}), per-seed: {list(np.round(r_long, 3))}')
+    print(f'long-range steering correlation (smell, W={args.long_window}), mean: {r_long.mean():.3f}')
+    hunt = hunt_score(out['nearest'], out['hits'], W=args.long_window)
+    print(f'hunt_score (eat-event-conditioned net approach, W={args.long_window}), per-seed: '
+          f'{list(np.round(hunt, 3))}')
+    print(f'hunt_score (eat-event-conditioned net approach, W={args.long_window}), mean: {np.nanmean(hunt):.3f}')
     if args.use_eye:
         r_eye = steering_correlation(out['dEye'], out['dM'])
         print(f'steering correlation (EYE), per-seed: {list(np.round(r_eye, 3))}')

@@ -1246,3 +1246,79 @@ else), and nothing tried so far converts that into metric-visible linear
 L-R steering.
 
 **Status:** `champion_evolverule_rfit_seed42.npy`/`run_evolverule_rfit_seed42.log`.
+
+## Task 16 — does candidate #4's food gain reflect real hunting behavior? Metric investigation, negative result
+
+Candidate #4 (Task 14) roughly doubles food without positive steering-r.
+Dave's question: is the extra food genuine (if non-linear/indirect) food
+pursuit, or a cheaper "lucky wanderer" effect? Built and discarded four
+metrics in increasing rigor, each one either confounded or failed a control:
+
+1. **`approach_frac`** (fraction of the 30 steps before each eat event with
+   decreasing distance-to-food). Dave caught the flaw directly: "hunger
+   driven speed control would be great if the food moved — but it doesn't.
+   so of course a 'sometimes faster' bot collects more food that's a good
+   reflex but not a 'hunting' one." Distance trivially decreases right before
+   eating by definition (food is stationary) — tautological, discarded.
+
+2. **200-step net-approach vs. random-window null** (ad hoc script, not
+   production code): controls for the above by comparing net distance closed
+   over 200 steps ending at an eat event against 200-step windows placed
+   randomly in the same trajectory. This DID show real signal: +0.11 to
+   +0.28 pre-eat vs. ~0 null, 12/12 seeds tested (both evolverule champions).
+
+3. **`long_range_correlation`** (built into `gpu_evolve.py`): the same idea
+   made unconditional and continuous — Pearson r between sensor asymmetry
+   now and net distance-closed over the next 150 steps, at every timestep.
+   Near-zero for the same champions that showed real signal in (2) — diluted
+   by averaging over all timesteps, not just pursuit episodes near an eat.
+
+4. **`hunt_score`** (built into `gpu_evolve.py`): eat-event-conditioned
+   fix for (3)'s dilution — mean net approach over a 200-step window ending
+   at each eat event, minus the mean over random 200-step windows in the
+   same trajectory (matches (2)'s logic, now as reusable production code).
+   **Null control run explicitly requested by Dave ("find out"): random,
+   untrained, no-learning weights score hunt_score = 0.176/0.170 (seed
+   42/seed 7) — matching every evolved champion, including the Task 9
+   baseline (0.175/0.180) and candidate #4 (0.133-0.143).** hunt_score does
+   not discriminate trained from untrained behavior at all.
+
+5. **`hunt_score_v2`** (built into `gpu_evolve.py`): hypothesis for (4)'s
+   failure — the environment's hardcoded wall-avoidance reflex
+   (`turn += dh_wall * wall * 0.3`, active for every individual regardless
+   of learning) drifts the creature center-ward whenever near a wall; since
+   food spawns uniformly, that alone looks like "approaching food." Fix
+   tried: restrict both pre-eat and null windows to periods where
+   wall-proximity stayed below a threshold throughout. **Result: still
+   fails.** Untrained null: 0.153-0.200 across seed42/seed7 (weights-only and
+   weights+1-lifetime-Hebbian variants). Trained champions: 0.079-0.249,
+   heavily overlapping the null range, plus most per-seed windows now NaN
+   (too few eat events ever satisfy the low-wall-proximity constraint for a
+   full 200 steps in this small arena) — same non-discrimination as (4), and
+   noisier.
+
+**Conclusion (Dave's call: stop metric-hunting, write this up):** the only
+metric in this whole project that reliably discriminates trained from
+untrained no-reflex behavior is the original linear steering correlation
+(`dL` vs `dM`). Every food-count-adjacent or distance-based behavioral
+metric tried this session — approach_frac, long_range_correlation,
+hunt_score, hunt_score_v2 — either measures a tautology or fails to beat an
+untrained/random-weight control. Candidate #4's ~2x food-count gain remains
+unexplained: it is not proven to be a "lucky wanderer" effect, but nothing
+built here proves it is genuine hunting either. Treat food count alone, on
+this environment, as an untrustworthy proxy for competence; steering
+correlation is the only metric on record that has passed a null control.
+The wall-avoidance-reflex confound diagnosed in step 5 is real (it's in the
+physics loop, active for everyone) but is not the whole explanation for why
+hunt_score fails — something else about the null (random weights still
+produce *some* net approach toward eat events, at a rate statistically
+indistinguishable from every evolved champion) remains unexplained and
+unresolved.
+
+**Status:** analysis-only, sandbox-side scripts (`null_control.py`,
+`null_control_v2.py`, `rescore_all.py`, `rescore_all_v2.py`,
+`analyze_champion.py`, `analyze_champion2.py`) — not committed, kept as
+scratch. `gpu_evolve.py` production changes (`hunt_score`, `hunt_score_v2`,
+`long_range_correlation`, `nearest`/`hits`/`wall` capture, `asym`
+diagnostic reuse) are real and committed; only their conclusions are
+negative.
