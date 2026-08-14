@@ -65,13 +65,44 @@ Defaults: `--fep-punish-t 150 --fep-wall-thresh 0.7 --fep-timeout-steps 800`.
   or near a local optimum, not one end of a "more is better" ramp. Not
   replicated on seed 7 (didn't beat baseline, so didn't meet the replication
   bar).
+- **Task 13** (Aug 14 2026): `CANDIDATE_MECHANISMS.md` research memo diagnosed
+  the root cause of the ~20-40% plateau — the plasticity rule is left/right
+  symmetric (every `sL` neuron gets identical injection; plain Hebbian
+  potentiates `sL->mL`/`sL->mR` equally), so no credit-assignment fix alone
+  can build a differential steering pathway. Added a permanent `asym`
+  weight-space diagnostic (Task 0) and tested shortlist items 1-3, all on the
+  corrected `--train-seeds 8` protocol (see below) — none beat baseline:
+  - `--homeo sub` (subtractive normalization, breaks symmetry via
+    homeostasis): food 6.12±1.67, r=-0.008.
+  - `--learning eh` (Exploratory Hebbian, 3-factor fluctuation rule): food
+    5.12±1.55, r=0.021, 6/8 positive — more genuine asym differentiation than
+    subtractive-norm, still below baseline.
+  - `--fep-punish-gate-steps 1000` (delay punishment onset, tests timing vs.
+    intensity): food 6.12±1.46, r=0.006, 5/8 positive.
+  - `--cp-steps`/`--cp-decay-len`/`--cp-floor` (critical-period plasticity
+    gating on top of FEP baseline): food 5.12±1.27, r=-0.022, 2/8 positive —
+    worse than baseline on both metrics.
+  - `--learning btsp` (standalone event-gated ~1000-step eligibility trace,
+    applied only on food-eat events): food 6.12±1.01, r=0.014, 7/8
+    positive — most consistent sign of the four, still below baseline
+    magnitude; weak positive signal, not discarded outright.
+  **Protocol change**: `--train-seeds` raised from 4 to 8 for all runs from
+  Task 13 onward, after Dave flagged that some champions looked highly
+  food-optimized without real steering — a symptom of too few food layouts
+  per generation letting evolution reward layout-specific luck.
 
-## Immediate next step (not yet run)
-With punishment intensity bracketed on both sides (Task 11: too soft loses,
-Task 12: too harsh loses), reasonable next moves, roughly in priority order:
-1. **Fine sweep around baseline** — small perturbations to one param at a
-   time near 150/0.7/800 (not the large jumps Tasks 11-12 used) to map the
-   shape of the local optimum, rather than assuming it's a single point.
+## Immediate next step
+Shortlist items 0-3 from `CANDIDATE_MECHANISMS.md` are exhausted; per Dave's
+"do 3 then 4" instruction, next is:
+1. **Candidate #4 — evolve-the-plasticity-rule** (Najarro & Risi): instead of
+   evolving ~6000 per-synapse weights directly, evolve a much smaller genome
+   (~80 per-pool-pair plasticity-rule coefficients) that each individual's
+   lifetime Hebbian/STDP dynamics then expresses into weights. Directly
+   targets the fitness-gaming/overfitting axis Dave flagged, by shrinking
+   what evolution can overfit to. Larger structural change to the GA side
+   than any prior candidate — in progress.
+
+Lower-priority backlog carried over from before Task 13, not yet touched:
 2. **FEP + eye pool** (`--use-eye`) — untested. Task 8's null result on
    vision used reward-gated `stdp` mode; may not generalize to FEP's
    plain-Hebbian rule.

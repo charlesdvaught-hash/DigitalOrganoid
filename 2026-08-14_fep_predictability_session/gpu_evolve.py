@@ -20,16 +20,6 @@ Curriculum: reflex_scale fades 1.0 -> 0.0 over CURRICULUM_GENS generations,
 then holds at 0.0 for the remainder, so evolution/STDP have something to
 shape around early instead of a blank no-reflex start on generation 0.
 
-Task 13 (CANDIDATE_MECHANISMS.md #0, #2): added an asym weight-space
-diagnostic (mean(w[sL->mL]) - mean(w[sL->mR]), and the sR mirror) logged
-per generation and on the final held-out champion, plus a --homeo {mult,sub}
-flag. 'mult' is the original multiplicative, 500-step homeostasis (default,
-reproduces every prior task's results unchanged). 'sub' is Miller & MacKay
-(1994)-style SUBTRACTIVE normalization of each postsynaptic neuron's total
-incoming excitatory weight, applied every --homeo-every steps (default 20,
-~25x faster than 'mult''s 500) -- the form that can break L/R symmetry,
-unlike multiplicative scaling which provably preserves it.
-
 Usage:
     python gpu_evolve.py --pop 64 --gens 60 --device cuda
 """
@@ -224,26 +214,11 @@ class BatchSim:
         self.noise_scale = BASE_NOISE + (1.0 - stage) * 0.015
         self.rare_p = 0.002 * (1.0 - stage)
 
-        # ---- Task 13: cached bits for --homeo sub, computed once (shared
-        # topology across the population) -- which plastic-excitatory
-        # synapses feed each postsynaptic neuron, and how many. ----
-        exc_p_idx = np.flatnonzero(exc_p)
-        self.post_exc = self.post_p[exc_p_idx] if len(exc_p_idx) else torch.empty(0, dtype=torch.long, device=device)
-        # exc_p_idx indexes into the (n_plastic,) axis directly (same order
-        # exc_mask does), so wp[:, self.exc_mask] and self.post_exc line up.
-        fan_in_exc = torch.zeros(N, device=device, dtype=dtype)
-        if len(exc_p_idx):
-            fan_in_exc.index_add_(0, self.post_exc, torch.ones_like(self.post_exc, dtype=dtype))
-        self.fan_in_exc = torch.clamp(fan_in_exc, min=1.0)
-
     def run(self, weight_plastic, T, reflex_scale, stdp_on=True, record_steering=False,
             learning='stdp', elig_decay=0.995, elig_lr=0.03, value_lr=0.02,
             eat_radius2=None, n_food=None, food_spawn_radius=None, metab_scale=1.0,
             motor_noise_start=0.0, motor_noise_end=0.0, init_food=None, use_eye=False,
-            fep_punish=False, fep_punish_t=150, fep_wall_thresh=0.7, fep_timeout_steps=800,
-            homeo='mult', homeo_every=20, eh_lr=0.05, eh_bar_decay=0.8,
-            cp_steps=10**9, cp_decay_len=1, cp_floor=1.0, fep_punish_gate_steps=0,
-            btsp_decay=0.999, btsp_lr=0.05):
+            fep_punish=False, fep_punish_t=150, fep_wall_thresh=0.7, fep_timeout_steps=800):
         """weight_plastic: (B, n_plastic) tensor, evolves in place and is
         returned updated. reflex_scale: python float, applied uniformly this
         lifetime (curriculum). Returns dict with food_eaten (B,) and, if
@@ -276,50 +251,6 @@ class BatchSim:
         scrambled input naturally doesn't. Orthogonal to `learning` in
         principle but intended to pair with learning='fep'.
 
-        learning='eh': Exploratory Hebbian / reward-modulated Hebbian with
-        double baseline subtraction (Legenstein et al. 2010; Hoerzer et al.
-        2014, CANDIDATE_MECHANISMS.md #1). Delta_w = eh_lr * (dopamine -
-        dopa_bar) * x_j * (a_i - a_bar_i) -- unlike 'stdp'/'surprise'/'fep',
-        the postsynaptic term is a SIGNED fluctuation from that neuron's own
-        recent running average, not a coincidence count, so it can push mL
-        up and mR down on the same input/step.
-
-        learning='btsp': behavioural-timescale eligibility (CANDIDATE_
-        MECHANISMS.md #B2, Bittner et al. 2017-inspired). A very slow
-        (btsp_decay, default 0.999 -> ~1000-step horizon, matching this
-        sim's actual approach-and-eat behavioural loop length) Hebbian
-        coincidence trace accumulates every step, independent of reward --
-        same math as 'surprise's `elig` but a 5x longer horizon. Unlike
-        'surprise', the trace is applied to weights ONLY on an eat-event
-        step (Delta_w = btsp_lr * elig, then the trace resets), not every
-        step -- so it never fires during a fep_punish window (those trigger
-        on wall/timeout, not on eating), sidestepping the interference that
-        sank Task 10's continuous 'surprise' + fep-punish combo.
-
-        cp_steps/cp_decay_len/cp_floor: critical-period plasticity gating
-        (CANDIDATE_MECHANISMS.md #D2, Achille et al. 2019-inspired). Scales
-        A_PLUS/A_MINUS (in 'fep' and 'btsp' only) by 1.0 for the first
-        cp_steps of the lifetime, then linearly decays to cp_floor over the
-        next cp_decay_len steps. Defaults (cp_steps=1e9) leave every prior
-        result unchanged. fep_punish_gate_steps: fep_punish cannot TRIGGER
-        a new punishment burst during the lifetime's first N steps (default
-        0 = unchanged) -- tests whether punishment *timing* rather than
-        intensity explains the Task 11/12 bracket, since a critical-period
-        account predicts early punishment is disproportionately damaging.
-
-        homeo='mult' (default, unchanged from every prior task): every 500
-        steps, scale a neuron's ENTIRE incoming weight vector by a common
-        factor toward a target firing rate. Miller & MacKay (1994): this
-        form provably CANNOT break initial left/right symmetry.
-        homeo='sub': Miller & MacKay / Zenke & Gerstner-style subtractive
-        normalization, every `homeo_every` steps (default 20, vs mult's
-        500). Each postsynaptic neuron's total incoming EXCITATORY plastic
-        weight is conserved at its lifetime-start value; whatever Hebbian
-        potentiation added this interval is subtracted back out evenly
-        across that neuron's incoming synapses, so growth in one synapse
-        necessarily shrinks its neighbors -- the competitive form that CAN
-        break symmetry, on a timescale close to the Hebbian update itself.
-
         "Hunting bootcamp" environment knobs (all optional, default = normal
         difficulty): eat_radius2/n_food override the normal reward geometry;
         food_spawn_radius, if set, respawns food within that radius of the
@@ -340,43 +271,14 @@ class BatchSim:
         wp = weight_plastic
         surprise = (learning == 'surprise')
         fep = (learning == 'fep')
-        eh = (learning == 'eh')
-        btsp = (learning == 'btsp')
         eat_r2 = EAT_RADIUS2 if eat_radius2 is None else eat_radius2
         nf = N_FOOD if n_food is None else n_food
         if surprise:
             elig = torch.zeros(B, self.n_plastic, device=dev, dtype=dt)
             value = torch.zeros(B, device=dev, dtype=dt)
-        if btsp:
-            # Behavioural-timescale eligibility: same Hebbian-coincidence
-            # trace math as 'surprise', but decayed far slower (~1000 steps
-            # vs ~40) and applied to weights only at eat events, not every
-            # step.
-            elig = torch.zeros(B, self.n_plastic, device=dev, dtype=dt)
-        if eh:
-            # Exploratory Hebbian / reward-modulated Hebbian with double
-            # baseline subtraction (Legenstein, Chase, Schwartz & Maass
-            # 2010; Hoerzer, Legenstein & Maass 2014). dopa_bar/a_bar are
-            # fast (eh_bar_decay, default 0.8 -> ~5-step horizon per the
-            # paper) low-pass filters of reward and PER-NEURON postsynaptic
-            # activity. Unlike every other rule here, [a_i - a_bar_i] is a
-            # SIGNED per-neuron fluctuation-from-baseline term -- it can be
-            # positive for mL and negative for mR on the same step, which is
-            # the missing ingredient for building a differential sL->mL vs
-            # sL->mR pathway (see CANDIDATE_MECHANISMS.md Part 1.1).
-            dopa_bar = torch.zeros(B, device=dev, dtype=dt)
-            a_bar = torch.zeros(B, N, device=dev, dtype=dt)
         if fep_punish:
             steps_since_food = torch.zeros(B, device=dev, dtype=dt)
             punish_timer = torch.zeros(B, device=dev, dtype=dt)
-
-        sub_homeo = (homeo == 'sub')
-        if sub_homeo:
-            # Conserve each postsynaptic neuron's total incoming excitatory
-            # plastic weight at this lifetime's starting value.
-            target_post = torch.zeros(B, N, device=dev, dtype=dt)
-            if self.post_exc.numel():
-                target_post.index_add_(1, self.post_exc, wp[:, self.exc_mask])
 
         v = self.c.unsqueeze(0).expand(B, N).clone()
         u = (self.b * self.c).unsqueeze(0).expand(B, N).clone()
@@ -437,12 +339,6 @@ class BatchSim:
 
             if fep_punish:
                 trigger = (wall > fep_wall_thresh) | (steps_since_food > fep_timeout_steps)
-                if t < fep_punish_gate_steps:
-                    # Critical-period test: punishment cannot START a new
-                    # burst this early in the lifetime (an in-progress burst
-                    # from before -- impossible at t=0 -- would still count
-                    # down normally; this only blocks new triggers).
-                    trigger = trigger & False
                 punish_timer = torch.where(trigger, torch.full_like(punish_timer, float(fep_punish_t)), punish_timer)
                 punished = punish_timer > 0
                 L_inj = torch.where(punished, torch.rand(B, device=dev, dtype=dt), L)
@@ -468,15 +364,6 @@ class BatchSim:
             dopamine = dopamine * 0.985
             trace_pre = trace_pre * TRACE_DECAY
             trace_post = trace_post * TRACE_DECAY
-            # Critical-period gating (CANDIDATE_MECHANISMS.md #D2): 1.0 for
-            # the first cp_steps, linear decay to cp_floor over the next
-            # cp_decay_len steps, then held. Defaults leave this at 1.0
-            # always (cp_steps=1e9). Only 'fep'/'btsp' consult it.
-            if t < cp_steps:
-                cp_mult = 1.0
-            else:
-                frac = min(1.0, (t - cp_steps) / max(1, cp_decay_len))
-                cp_mult = 1.0 - frac * (1.0 - cp_floor)
             energy = energy + (1.0 - energy) * 0.001
             fatigue = fatigue * 0.98
             excitability = energy * (1.0 - fatigue * 0.5)
@@ -511,7 +398,7 @@ class BatchSim:
             trace_pre = trace_pre + firef
             trace_post = trace_post + firef
 
-            if stdp_on and not surprise and not fep and not eh and not btsp:
+            if stdp_on and not surprise and not fep:
                 dopa_mult = (0.1 + dopamine * 4.0).unsqueeze(1)
                 pf = fired[:, self.post_p]
                 qf = fired[:, self.pre_p]
@@ -526,31 +413,14 @@ class BatchSim:
                 # Plain, unmodulated Hebbian STDP -- no dopamine gating at
                 # all. All credit assignment happens on the environment side
                 # (fep_punish scrambling), not in the weight-update rule.
-                # cp_mult (1.0 unless --cp-steps set) applies critical-period
-                # gating: full plasticity early, decaying later.
                 pf = fired[:, self.post_p]
                 qf = fired[:, self.pre_p]
                 le = torch.minimum(energy[:, self.pre_p], energy[:, self.post_p])
-                wp = wp + A_PLUS * cp_mult * trace_pre[:, self.pre_p] * le * pf.to(dt)
-                wp = wp - A_MINUS * cp_mult * trace_post[:, self.post_p] * le * qf.to(dt)
+                wp = wp + A_PLUS * trace_pre[:, self.pre_p] * le * pf.to(dt)
+                wp = wp - A_MINUS * trace_post[:, self.post_p] * le * qf.to(dt)
                 wp = torch.where(self.exc_mask.unsqueeze(0),
                                  torch.clamp(wp, 0.0, W_MAX),
                                  torch.clamp(wp, -W_MAX, 0.0))
-
-            if stdp_on and btsp:
-                # Slow Hebbian eligibility (btsp_decay, ~1000-step horizon),
-                # gated by cp_mult like 'fep'. Applied to WEIGHTS only on an
-                # eat-event step (hits>0, computed later this same step and
-                # looked up via a one-step-delayed hit mask is awkward here,
-                # so instead: accumulate every step, and separately apply +
-                # reset at the eat-detection point later in the loop -- see
-                # "BTSP event-gated application" below.
-                pf = fired[:, self.post_p]
-                qf = fired[:, self.pre_p]
-                le = torch.minimum(energy[:, self.pre_p], energy[:, self.post_p])
-                hebb = (A_PLUS * cp_mult * trace_pre[:, self.pre_p] * pf.to(dt)
-                       - A_MINUS * cp_mult * trace_post[:, self.post_p] * qf.to(dt)) * le
-                elig = elig * btsp_decay + hebb
 
             if stdp_on and surprise:
                 # 1) Hebbian eligibility: slow trace of pre/post coincidence,
@@ -574,55 +444,16 @@ class BatchSim:
                                  torch.clamp(wp, 0.0, W_MAX),
                                  torch.clamp(wp, -W_MAX, 0.0))
 
-            if stdp_on and eh:
-                # Delta_w_ij = eta * [R - Rbar] * x_j * [a_i - abar_i], using
-                # the baselines from BEFORE this step's update (so the term
-                # reflects "did reward beat its recent running average, and
-                # did this postsynaptic neuron fire more/less than ITS
-                # recent running average" -- both signed, both local).
-                delta_r = (dopamine - dopa_bar).unsqueeze(1)          # (B,1)
-                a_fluct = smoothed - a_bar                            # (B,N)
-                x_j = smoothed[:, self.pre_p]                         # (B,n_plastic)
-                a_fluct_i = a_fluct[:, self.post_p]                   # (B,n_plastic)
-                wp = wp + eh_lr * delta_r * x_j * a_fluct_i
-                wp = torch.where(self.exc_mask.unsqueeze(0),
-                                 torch.clamp(wp, 0.0, W_MAX),
-                                 torch.clamp(wp, -W_MAX, 0.0))
-                dopa_bar = dopa_bar * eh_bar_decay + dopamine * (1.0 - eh_bar_decay)
-                a_bar = a_bar * eh_bar_decay + smoothed * (1.0 - eh_bar_decay)
-
             if stdp_on:
-                if not sub_homeo:
-                    if (t + 1) % 500 == 0:
-                        rate_post = firing_rate[:, self.post_p]
-                        sf = torch.ones_like(rate_post)
-                        sf = torch.where(rate_post < 0.02, torch.full_like(sf, 1.0 + 0.05 * HOMEO_STRENGTH), sf)
-                        sf = torch.where(rate_post > 0.02, torch.full_like(sf, max(0.7, 1.0 - 0.05 * HOMEO_STRENGTH)), sf)
-                        wp = wp * sf
-                        wp = torch.where(self.exc_mask.unsqueeze(0),
-                                         torch.clamp(wp, 0.0, W_MAX),
-                                         torch.clamp(wp, -W_MAX, 0.0))
-                else:
-                    if (t + 1) % homeo_every == 0 and self.post_exc.numel():
-                        # Subtractive normalization (Miller & MacKay 1994):
-                        # conserve each postsynaptic neuron's total incoming
-                        # excitatory plastic weight at its lifetime-start
-                        # value. Whatever Hebbian potentiation added this
-                        # interval is subtracted back out evenly across that
-                        # neuron's incoming synapses -- growth in one synapse
-                        # necessarily competes with its neighbors, which is
-                        # the form that CAN break symmetry (unlike the
-                        # multiplicative 'mult' branch above).
-                        cur_post = torch.zeros(B, N, device=dev, dtype=dt)
-                        cur_post.index_add_(1, self.post_exc, wp[:, self.exc_mask])
-                        excess = cur_post - target_post  # (B, N)
-                        corr = excess[:, self.post_exc] / self.fan_in_exc[self.post_exc].unsqueeze(0)
-                        wp_exc = wp[:, self.exc_mask] - corr
-                        wp = wp.clone()
-                        wp[:, self.exc_mask] = wp_exc
-                        wp = torch.where(self.exc_mask.unsqueeze(0),
-                                         torch.clamp(wp, 0.0, W_MAX),
-                                         torch.clamp(wp, -W_MAX, 0.0))
+                if (t + 1) % 500 == 0:
+                    rate_post = firing_rate[:, self.post_p]
+                    sf = torch.ones_like(rate_post)
+                    sf = torch.where(rate_post < 0.02, torch.full_like(sf, 1.0 + 0.05 * HOMEO_STRENGTH), sf)
+                    sf = torch.where(rate_post > 0.02, torch.full_like(sf, max(0.7, 1.0 - 0.05 * HOMEO_STRENGTH)), sf)
+                    wp = wp * sf
+                    wp = torch.where(self.exc_mask.unsqueeze(0),
+                                     torch.clamp(wp, 0.0, W_MAX),
+                                     torch.clamp(wp, -W_MAX, 0.0))
 
             energy = torch.clamp(energy, 0.0, 1.0)
             fatigue = torch.clamp(fatigue, 0.0, 1.0)
@@ -660,21 +491,6 @@ class BatchSim:
             dyh = food[:, :, 1] - cy.unsqueeze(1)
             hit = (dxh * dxh + dyh * dyh < eat_r2) & alive.unsqueeze(1)
             hits = hit.sum(dim=1).to(dt)
-
-            if stdp_on and btsp:
-                # BTSP event-gated application: on rows that just ate,
-                # apply the accumulated slow trace to weights and reset it,
-                # so credit is assigned once per approach-and-eat rather
-                # than smeared continuously (and never during a fep_punish
-                # window, since those trigger on wall/timeout, not on
-                # eating -- sidesteps Task 10's interference mechanism).
-                ate = (hits > 0).unsqueeze(1).to(dt)  # (B,1)
-                wp = wp + btsp_lr * elig * ate
-                wp = torch.where(self.exc_mask.unsqueeze(0),
-                                 torch.clamp(wp, 0.0, W_MAX),
-                                 torch.clamp(wp, -W_MAX, 0.0))
-                elig = elig * (1.0 - ate)
-
             if food_spawn_radius is not None:
                 offset = (torch.rand(B, nf, 2, device=dev, dtype=dt) * 2 - 1) * food_spawn_radius
                 center = torch.stack([cx, cy], dim=1).unsqueeze(1)
@@ -773,35 +589,6 @@ def oracle(T, seed, speed=0.0009):
     return score
 
 
-# --------------------------------------------------------------------------- #
-# Task 13 (CANDIDATE_MECHANISMS.md #0): asym weight-space diagnostic.
-# mean(w[sL->mL]) - mean(w[sL->mR]) and the sR mirror, computed directly on
-# a genome (numpy, plastic-synapse-indexed). Measures the thing the learning
-# mechanism is supposed to build (a differential pathway), rather than
-# inferring it from noisy behavioral steering correlation.
-# --------------------------------------------------------------------------- #
-def build_asym_masks(scaffold):
-    plastic = ~scaffold['is_reflex']
-    pre_p = scaffold['pre'][plastic]
-    post_p = scaffold['post'][plastic]
-    sL0, sL1 = POOLS['sL']; sR0, sR1 = POOLS['sR']
-    mL0, mL1 = POOLS['mL']; mR0, mR1 = POOLS['mR']
-    return dict(
-        sL_mL=(pre_p >= sL0) & (pre_p < sL1) & (post_p >= mL0) & (post_p < mL1),
-        sL_mR=(pre_p >= sL0) & (pre_p < sL1) & (post_p >= mR0) & (post_p < mR1),
-        sR_mR=(pre_p >= sR0) & (pre_p < sR1) & (post_p >= mR0) & (post_p < mR1),
-        sR_mL=(pre_p >= sR0) & (pre_p < sR1) & (post_p >= mL0) & (post_p < mL1),
-    )
-
-
-def compute_asym(genome, masks):
-    def m(mask):
-        return float(genome[mask].mean()) if mask.any() else 0.0
-    asym_L = m(masks['sL_mL']) - m(masks['sL_mR'])
-    asym_R = m(masks['sR_mR']) - m(masks['sR_mL'])
-    return asym_L, asym_R
-
-
 def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=False):
     """One genome-batch's full lifetime: optional bootcamp phase (easy,
     dense-reward, annealed exploration -- shapes weights) followed by the
@@ -809,12 +596,7 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
     food_eaten/steering counts for fitness -- bootcamp food doesn't."""
     wp = weight_plastic
     fep_kw = dict(fep_punish=args.fep_punish, fep_punish_t=args.fep_punish_t,
-                  fep_wall_thresh=args.fep_wall_thresh, fep_timeout_steps=args.fep_timeout_steps,
-                  fep_punish_gate_steps=args.fep_punish_gate_steps)
-    homeo_kw = dict(homeo=args.homeo, homeo_every=args.homeo_every)
-    eh_kw = dict(eh_lr=args.eh_lr, eh_bar_decay=args.eh_bar_decay)
-    cp_kw = dict(cp_steps=args.cp_steps, cp_decay_len=args.cp_decay_len, cp_floor=args.cp_floor)
-    btsp_kw = dict(btsp_decay=args.btsp_decay, btsp_lr=args.btsp_lr)
+                  fep_wall_thresh=args.fep_wall_thresh, fep_timeout_steps=args.fep_timeout_steps)
     if args.bootcamp:
         boot_out = sim.run(wp, args.boot_t, reflex_scale, stdp_on=True,
                            learning=args.learning, elig_decay=args.elig_decay,
@@ -824,13 +606,11 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
                            metab_scale=args.boot_metab_scale,
                            motor_noise_start=args.boot_noise_start,
                            motor_noise_end=args.boot_noise_end,
-                           use_eye=args.use_eye, **fep_kw, **homeo_kw, **eh_kw,
-                           **cp_kw, **btsp_kw)
+                           use_eye=args.use_eye, **fep_kw)
         wp = boot_out['weight_plastic']
     return sim.run(wp, T, reflex_scale, stdp_on=True, record_steering=record_steering,
                    learning=args.learning, elig_decay=args.elig_decay,
-                   elig_lr=args.elig_lr, value_lr=args.value_lr, use_eye=args.use_eye,
-                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw)
+                   elig_lr=args.elig_lr, value_lr=args.value_lr, use_eye=args.use_eye, **fep_kw)
 
 
 def main():
@@ -854,19 +634,12 @@ def main():
     ap.add_argument('--out', type=str, default='champion_gpu_curriculum.npy')
     ap.add_argument('--dense-k', type=int, default=0,
                     help='extra plastic sensor->motor synapses per motor neuron (round 2 scaffold)')
-    ap.add_argument('--learning', type=str, default='stdp', choices=['stdp', 'surprise', 'fep', 'eh', 'btsp'],
+    ap.add_argument('--learning', type=str, default='stdp', choices=['stdp', 'surprise', 'fep'],
                     help='stdp = reward-gated instantaneous STDP; surprise = eligibility x TD-error; '
-                         'fep = plain unmodulated Hebbian STDP, pair with --fep-punish; '
-                         'eh = exploratory Hebbian, signed postsynaptic-fluctuation x reward-fluctuation '
-                         "(CANDIDATE_MECHANISMS.md #1); btsp = event-gated behavioural-timescale "
-                         'eligibility, applied only on eat events (CANDIDATE_MECHANISMS.md #3/B2)')
+                         'fep = plain unmodulated Hebbian STDP, pair with --fep-punish')
     ap.add_argument('--elig-decay', type=float, default=0.995)
     ap.add_argument('--elig-lr', type=float, default=0.03)
     ap.add_argument('--value-lr', type=float, default=0.02)
-    ap.add_argument('--eh-lr', type=float, default=0.05, help='learning='"'"'eh'"'"' only: weight-update rate')
-    ap.add_argument('--eh-bar-decay', type=float, default=0.8,
-                    help="learning='eh' only: low-pass decay for the reward/activity running "
-                         "baselines (0.8 -> ~5-step horizon, matching Hoerzer et al. 2014)")
     ap.add_argument('--fixed-reflex-scale', type=float, default=None,
                     help='if set, overrides curriculum and holds reflex_scale constant all generations')
     ap.add_argument('--bootcamp', action='store_true',
@@ -894,44 +667,18 @@ def main():
                     help='wall-proximity signal (0-1) that triggers punishment')
     ap.add_argument('--fep-timeout-steps', type=int, default=800,
                     help='steps without eating that trigger punishment')
-    ap.add_argument('--homeo', type=str, default='mult', choices=['mult', 'sub'],
-                    help="mult = original multiplicative homeostasis, every 500 steps "
-                         "(default, reproduces every prior task unchanged). sub = Miller & "
-                         "MacKay-style subtractive normalization of each neuron's total "
-                         "incoming excitatory plastic weight, every --homeo-every steps -- "
-                         "the form that can break L/R symmetry (CANDIDATE_MECHANISMS.md #2)")
-    ap.add_argument('--homeo-every', type=int, default=20,
-                    help='steps between --homeo sub applications (ignored for mult, which is '
-                         'hardcoded to 500 to keep old results reproducible)')
-    ap.add_argument('--fep-punish-gate-steps', type=int, default=0,
-                    help='fep_punish cannot trigger a NEW burst during the first N steps of the '
-                         'lifetime (default 0 = unchanged). Tests punishment TIMING vs intensity '
-                         '(CANDIDATE_MECHANISMS.md #D2)')
-    ap.add_argument('--cp-steps', type=int, default=10**9,
-                    help="critical-period gating (learning in {fep,btsp} only): full plasticity "
-                         "for the lifetime's first N steps, then decays toward --cp-floor over "
-                         "--cp-decay-len steps. Default (1e9) = always full plasticity, unchanged.")
-    ap.add_argument('--cp-decay-len', type=int, default=1,
-                    help='steps over which plasticity decays from 1.0 to --cp-floor after --cp-steps')
-    ap.add_argument('--cp-floor', type=float, default=1.0,
-                    help='plasticity multiplier floor after the critical period decays (1.0 = no-op)')
-    ap.add_argument('--btsp-decay', type=float, default=0.999,
-                    help="learning='btsp' only: eligibility trace decay (0.999 -> ~1000-step horizon)")
-    ap.add_argument('--btsp-lr', type=float, default=0.05,
-                    help="learning='btsp' only: weight-update rate applied at each eat event")
     args = ap.parse_args()
 
     device = torch.device(args.device)
     print(f'device: {device}', flush=True)
     if device.type == 'cuda':
         print(f'GPU: {torch.cuda.get_device_name(0)}', flush=True)
-    print(f'learning: {args.learning}  dense_k: {args.dense_k}  homeo: {args.homeo}', flush=True)
+    print(f'learning: {args.learning}  dense_k: {args.dense_k}', flush=True)
 
     scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k)
     sim = BatchSim(scaffold, device)
     n_genes = sim.n_plastic
     print(f'genes (plastic synapses): {n_genes}', flush=True)
-    asym_masks = build_asym_masks(scaffold)
 
     plastic = ~scaffold['is_reflex']
     types = scaffold['types']; pre = scaffold['pre']
@@ -974,10 +721,8 @@ def main():
             champion_fit = best_fit
             champion = ranked[0].copy()
 
-        asym_L, asym_R = compute_asym(ranked[0], asym_masks)
         print(f'gen {gen:3d}  reflex_scale {reflex_scale:.2f}  best {best_fit:6.2f}  '
               f'mean {mean_fit:6.2f}  champion-so-far {champion_fit:6.2f}  '
-              f'asym_L {asym_L:+.4f}  asym_R {asym_R:+.4f}  '
               f't={time.time()-t0:6.1f}s', flush=True)
 
         pop = breed_next_generation(ranked, lo, hi, args.pop, args.elite_frac,
@@ -985,10 +730,6 @@ def main():
 
     np.save(args.out, champion)
     print(f'\nchampion saved to {args.out}', flush=True)
-
-    champ_asym_L, champ_asym_R = compute_asym(champion, asym_masks)
-    print(f'champion asym_L (sL->mL minus sL->mR): {champ_asym_L:+.4f}')
-    print(f'champion asym_R (sR->mR minus sR->mL): {champ_asym_R:+.4f}')
 
     # Held-out evaluation at reflex_scale=0.0 (the real no-reflex test) plus a
     # steering-correlation check on the same held-out champion.
