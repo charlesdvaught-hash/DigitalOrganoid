@@ -447,6 +447,10 @@ class BatchSim:
         dEye_hist = [] if (record_steering and use_eye) else None
         near_hist = [] if record_steering else None
         hits_hist = [] if record_steering else None
+        wall_hist = [] if record_steering else None
+        cx_hist = [] if record_steering else None
+        cy_hist = [] if record_steering else None
+        food_hist = [] if record_steering else None
 
         for t in range(T):
             dx = food[:, :, 0] - cx.unsqueeze(1)
@@ -693,6 +697,10 @@ class BatchSim:
                 dL_hist.append((L - R).detach())
                 dM_hist.append((mL - mR).detach())
                 near_hist.append(nearest.detach())
+                wall_hist.append(wall.detach())
+                cx_hist.append(cx.detach())
+                cy_hist.append(cy.detach())
+                food_hist.append(food.detach().clone())
                 if use_eye:
                     half = N_EYE // 2
                     dEye_hist.append((eye_sig[:, :half].mean(dim=1) - eye_sig[:, half:].mean(dim=1)).detach())
@@ -760,6 +768,10 @@ class BatchSim:
             out['dM'] = torch.stack(dM_hist, dim=0)
             out['nearest'] = torch.stack(near_hist, dim=0)   # (T, B), distance to nearest food
             out['hits'] = torch.stack(hits_hist, dim=0)      # (T, B), food-eat events per step
+            out['wall'] = torch.stack(wall_hist, dim=0)      # (T, B), wall-proximity signal (0-1)
+            out['cx'] = torch.stack(cx_hist, dim=0)          # (T, B), creature x position (pre-move-of-this-step)
+            out['cy'] = torch.stack(cy_hist, dim=0)          # (T, B), creature y position
+            out['food_pos'] = torch.stack(food_hist, dim=0)  # (T, B, nf, 2), food positions (pre-eat-of-this-step)
             if use_eye:
                 out['dEye'] = torch.stack(dEye_hist, dim=0)
         return out
@@ -874,6 +886,51 @@ def hunt_score(nearest, hits, W=200, seed=0):
         n_null = max(len(pre), 1) * 5
         starts = rng.integers(0, max(1, T - W), size=n_null)
         null = [near[s, b] - near[s + W - 1, b] for s in starts]
+        out[b] = float(np.mean(pre) - np.mean(null))
+    return out
+
+
+def hunt_score_v2(nearest, hits, wall, W=200, wall_thresh=0.15, seed=0):
+    """hunt_score confounded control (Task 14 follow-up part 2): a null of
+    RANDOM, UNTRAINED, unlearned weights scored the same as every evolved
+    champion on hunt_score (~0.13-0.18 for all). Root cause: the environment
+    itself has a hardcoded wall-avoidance reflex baked into the physics loop
+    (turn += dh_wall * wall * 0.3, active regardless of the evolved/learned
+    circuit) that steers the creature toward the arena center whenever it's
+    near a wall -- since food is spawned uniformly, this alone produces a
+    center-ward drift that looks like "approaching food" in hunt_score,
+    with zero learning involved.
+
+    This version restricts every window (both the pre-eat sample and its
+    null) to ones where wall-proximity stayed below wall_thresh throughout
+    -- i.e. periods where the hardcoded reflex is inactive, so any residual
+    approach signal has to come from the evolved/learned circuit instead.
+    Same (B,) numpy output and sign convention as hunt_score; NaN where a
+    seed has no qualifying pre-eat window."""
+    near = nearest.detach().cpu().numpy()
+    hit_arr = hits.detach().cpu().numpy()
+    wall_arr = wall.detach().cpu().numpy()
+    T, B = near.shape
+    rng = np.random.default_rng(seed)
+    out = np.full(B, np.nan)
+    for b in range(B):
+        eat_steps = np.flatnonzero(hit_arr[:, b] > 0)
+        pre = []
+        for hi in eat_steps:
+            if hi - W > 0 and wall_arr[hi - W:hi, b].max() < wall_thresh:
+                pre.append(near[hi - W, b] - near[hi - 1, b])
+        if not pre:
+            continue
+        n_null_target = max(len(pre), 1) * 5
+        null = []
+        attempts = 0
+        while len(null) < n_null_target and attempts < n_null_target * 20:
+            s = rng.integers(0, max(1, T - W))
+            attempts += 1
+            if wall_arr[s:s + W, b].max() < wall_thresh:
+                null.append(near[s, b] - near[s + W - 1, b])
+        if not null:
+            continue
         out[b] = float(np.mean(pre) - np.mean(null))
     return out
 
