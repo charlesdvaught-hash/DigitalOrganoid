@@ -274,6 +274,22 @@ class BatchSim:
         self.theta_eye = torch.linspace(-EYE_FOV / 2, EYE_FOV / 2, N_EYE, device=device, dtype=dtype)
         self.pool_slices = {k: v for k, v in POOLS.items()}
         self.sensor_factor = SENSOR_GAIN * 14.0
+        # Task 17, item 2 (Dave, per bl1's encoding.py): distributed
+        # place+rate population code for the single-scalar sensor pools
+        # (sL/sR/sW/sD/sH/sT, each 20 neurons wide). Each of the 20 neurons
+        # in a pool gets a "preferred value" tiling [0,1]; a scalar reading
+        # v is injected as a soft (Gaussian) kernel of distance |v -
+        # preferred| across the pool instead of broadcasting v identically
+        # to all 20 -- different neurons respond to different intensity
+        # bands, with smooth blending at band edges. The per-sample kernel
+        # is re-normalized to sum to 1 across the pool (a soft partition of
+        # unity) and then scaled by v * pool_width, so the TOTAL current
+        # injected into the pool each step matches the old scalar-broadcast
+        # total (v * pool_width) exactly -- only its distribution across
+        # neurons changes. Off by default (place_code=False in run());
+        # verified no-op at defaults.
+        self.place_pref = torch.linspace(0.0, 1.0, 20, device=device, dtype=dtype)
+        self.place_sigma = 0.15
         stage = DEV_STAGE
         self.noise_scale = BASE_NOISE + (1.0 - stage) * 0.015
         self.rare_p = 0.002 * (1.0 - stage)
@@ -348,6 +364,20 @@ class BatchSim:
         gate = torch.sigmoid(logit)
         return base_weight.unsqueeze(0) * gate
 
+    def _place_encode(self, value):
+        """Task 17 item 2: distributed place+rate population code. value:
+        (B,) tensor in [0,1]. Returns (B, 20) -- a soft Gaussian kernel over
+        this pool's 20 preferred values, re-normalized to a partition of
+        unity across the pool then rescaled by value * pool_width so the
+        TOTAL injected current across the pool matches plain scalar
+        broadcast (value * pool_width) exactly; only how it's distributed
+        across the 20 neurons changes (band-tuned, smooth blending at
+        edges, bl1 encoding.py style)."""
+        diff = value.unsqueeze(1) - self.place_pref.unsqueeze(0)  # (B, 20)
+        k = torch.exp(-0.5 * (diff / self.place_sigma) ** 2)
+        k = k / k.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        return k * value.unsqueeze(1) * self.place_pref.shape[0]
+
     def run(self, weight_plastic, T, reflex_scale, stdp_on=True, record_steering=False,
             learning='stdp', elig_decay=0.995, elig_lr=0.03, value_lr=0.02,
             eat_radius2=None, n_food=None, food_spawn_radius=None, metab_scale=1.0,
@@ -356,7 +386,7 @@ class BatchSim:
             homeo='mult', homeo_every=20, eh_lr=0.05, eh_bar_decay=0.8,
             cp_steps=10**9, cp_decay_len=1, cp_floor=1.0, fep_punish_gate_steps=0,
             btsp_decay=0.999, btsp_lr=0.05, rule_a_plus=None, rule_a_minus=None,
-            clamp_LR=None, freeze_motion=False):
+            clamp_LR=None, freeze_motion=False, place_code=False):
         """weight_plastic: (B, n_plastic) tensor, evolves in place and is
         returned updated. reflex_scale: python float, applied uniformly this
         lifetime (curriculum). Returns dict with food_eaten (B,) and, if
@@ -459,7 +489,18 @@ class BatchSim:
         keep learning during the probe) for a clean causal test: does mL-mR
         track L_fixed-R_fixed the way a diode's output tracks its input,
         with nothing else in the loop able to explain the result. Default
-        None leaves every prior result unchanged (verified no-op)."""
+        None leaves every prior result unchanged (verified no-op).
+
+        place_code: Task 17 item 2 (Dave, per bl1's encoding.py). Default
+        False (unchanged, verified no-op): each single-scalar sensor pool
+        (sL/sR/sW/sD/sH/sT) broadcasts its one value identically to all 20
+        of its neurons. True: each of those pools' 20 neurons instead gets
+        a distributed place+rate code via self._place_encode -- a soft
+        Gaussian kernel over 20 preferred values tiling [0,1], smoothly
+        blended at band edges, total injected current per pool unchanged.
+        A richer, more differentiable-feeling gradient for the existing
+        Hebbian/STDP machinery to build structure from than a single
+        repeated scalar."""
         dev, dt = self.device, self.dtype
         B = weight_plastic.shape[0]
         N = self.N
@@ -599,14 +640,22 @@ class BatchSim:
 
             sensor_inj = torch.zeros(B, N, device=dev, dtype=dt)
             av = alive.to(dt).unsqueeze(1)
-            sensor_inj[:, 0:20] = (L_inj * self.sensor_factor).unsqueeze(1) * av
-            sensor_inj[:, 20:40] = (R_inj * self.sensor_factor).unsqueeze(1) * av
-            sensor_inj[:, 40:60] = (wall * self.sensor_factor).unsqueeze(1) * av
-            sensor_inj[:, 60:80] = (food_close * self.sensor_factor).unsqueeze(1) * av
+            if place_code:
+                sensor_inj[:, 0:20] = self._place_encode(L_inj) * self.sensor_factor * av
+                sensor_inj[:, 20:40] = self._place_encode(R_inj) * self.sensor_factor * av
+                sensor_inj[:, 40:60] = self._place_encode(wall) * self.sensor_factor * av
+                sensor_inj[:, 60:80] = self._place_encode(food_close) * self.sensor_factor * av
+                sensor_inj[:, 80:100] = self._place_encode(hunger) * self.sensor_factor * av
+                sensor_inj[:, 100:120] = self._place_encode(tired) * self.sensor_factor * av
+            else:
+                sensor_inj[:, 0:20] = (L_inj * self.sensor_factor).unsqueeze(1) * av
+                sensor_inj[:, 20:40] = (R_inj * self.sensor_factor).unsqueeze(1) * av
+                sensor_inj[:, 40:60] = (wall * self.sensor_factor).unsqueeze(1) * av
+                sensor_inj[:, 60:80] = (food_close * self.sensor_factor).unsqueeze(1) * av
+                sensor_inj[:, 80:100] = (hunger * self.sensor_factor).unsqueeze(1) * av
+                sensor_inj[:, 100:120] = (tired * self.sensor_factor).unsqueeze(1) * av
             if use_eye:
                 sensor_inj[:, self.eye_lo:self.eye_hi] = eye_inj * self.sensor_factor * av
-            sensor_inj[:, 80:100] = (hunger * self.sensor_factor).unsqueeze(1) * av
-            sensor_inj[:, 100:120] = (tired * self.sensor_factor).unsqueeze(1) * av
 
             dopamine = dopamine * 0.985
             trace_pre = trace_pre * TRACE_DECAY
@@ -1251,6 +1300,7 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
     eh_kw = dict(eh_lr=args.eh_lr, eh_bar_decay=args.eh_bar_decay)
     cp_kw = dict(cp_steps=args.cp_steps, cp_decay_len=args.cp_decay_len, cp_floor=args.cp_floor)
     btsp_kw = dict(btsp_decay=args.btsp_decay, btsp_lr=args.btsp_lr)
+    place_code = getattr(args, 'place_code', False)
     if args.bootcamp:
         boot_out = sim.run(wp, args.boot_t, reflex_scale, stdp_on=True,
                            learning=args.learning, elig_decay=args.elig_decay,
@@ -1260,12 +1310,14 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
                            metab_scale=args.boot_metab_scale,
                            motor_noise_start=args.boot_noise_start,
                            motor_noise_end=args.boot_noise_end,
-                           use_eye=args.use_eye, **fep_kw, **homeo_kw, **eh_kw,
+                           use_eye=args.use_eye, place_code=place_code,
+                           **fep_kw, **homeo_kw, **eh_kw,
                            **cp_kw, **btsp_kw, **rule_kw)
         wp = boot_out['weight_plastic']
     return sim.run(wp, T, reflex_scale, stdp_on=True, record_steering=record_steering,
                    learning=args.learning, elig_decay=args.elig_decay,
                    elig_lr=args.elig_lr, value_lr=args.value_lr, use_eye=args.use_eye,
+                   place_code=place_code,
                    **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw, **rule_kw)
 
 
@@ -1305,6 +1357,15 @@ def main():
                          '(anatomically real placement, not a hand-set wiring rule), then let the '
                          'existing unmodified distance-decay K-NN topology wire on that geometry '
                          'same as it always does for every other pool.')
+    ap.add_argument('--place-code', action='store_true',
+                    help="Task 17 item 2 (Dave, per bl1's encoding.py) -- distributed place+rate "
+                         'population code for the single-scalar sensor pools (sL/sR/sW/sD/sH/sT, '
+                         "each 20 neurons): instead of broadcasting one scalar identically to all "
+                         '20 neurons in a pool, each neuron gets a soft Gaussian-kernel share '
+                         'based on distance between the scalar and that neuron\'s own preferred '
+                         'value (tiled 0..1 across the pool), smoothly blended at band edges, '
+                         'total injected current per pool unchanged. Default False leaves every '
+                         'prior result unchanged (verified no-op).')
     ap.add_argument('--learning', type=str, default='stdp',
                     choices=['stdp', 'surprise', 'fep', 'eh', 'btsp', 'evolverule'],
                     help='stdp = reward-gated instantaneous STDP; surprise = eligibility x TD-error; '
