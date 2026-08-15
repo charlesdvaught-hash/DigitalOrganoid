@@ -1,10 +1,29 @@
-# DigitalOrganoid — session handoff (Aug 14 2026)
+# DigitalOrganoid — session handoff (Aug 15 2026)
 
 ## Where things stand right now
 Shortlist items 0-4 of `CANDIDATE_MECHANISMS.md` are now all closed out,
-plus one Dave-proposed candidate (evo-devo guidance-code wiring). **None
-beat the Task 9 FEP baseline's steering correlation (r=0.080/0.041, seed
-42/seed 7).** Task 9 remains the best-validated mechanism on record.
+plus one Dave-proposed candidate (evo-devo guidance-code wiring), plus four
+structural-prior mechanisms on the sensor-motor interface (contralateral
+bias both signs, spatial embedding, place-code — Task 18). **None beat the
+Task 9 FEP baseline's steering correlation (r=0.080/0.041, seed 42/seed 7)
+with a consistent, replicating delta on both seeds.** Task 9 remains the
+best-validated mechanism on record.
+
+**Task 18 — structural priors on the interface, delta-metric methodology:**
+tested whether biasing *topology* (crossing probability, or real hemisphere
+geometry) while leaving weight sign/magnitude to evolve normally can build
+steering the plain baseline can't. New standard: `delta = trained_r -
+untrained_r_with_the_same_bias` — positive delta means learning adds real
+value beyond the prior. Toward-food contra-bias (`contra_bias=-2.0`) got
+closest: best r on record (0.218, seed7) but seed42's delta is flat/negative
+(the prior alone explains it there). Spatial embedding (pure geometry, no
+hand-set probability) was not cleaner than the hand-set bias — worse
+deltas on both seeds. Place-code (agent-built, bl1-inspired Gaussian
+population coding) had the only genuinely flat null of the four but
+regresses vs. baseline on both seeds. Confirmed pattern across 3 of 4
+mechanisms: seed7 delta positive, seed42 delta flat/negative — looks like a
+property of that topology draw, not any one mechanism. Full detail:
+RESULTS.md Task 18.
 
 **Candidate #4 (evolve-the-plasticity-rule)** roughly doubles food count on
 both topologies (huge effect, biggest of the project) but does NOT reliably
@@ -128,6 +147,14 @@ Defaults: `--fep-punish-t 150 --fep-wall-thresh 0.7 --fep-timeout-steps 800`.
 | 15 | `--wiring guide` (candidate A, Dave's idea) | 2.25±0.70 | 0.002 | 1 data point, inconclusive |
 | 16 | behavioral metrics for #4's food gain | — | — | all 4 tried are tautological or fail null control |
 | 17 | `bench_diode()` — isolated open-loop probe | — | — | candidate #4 = large constant motor bias, not steering |
+| 18 | `contra_bias=+2.0` (crossed-favoring), seed42 | 4.00±0.73 | -0.050 | delta +0.087, but absolute r/food still bad |
+| 18 | `contra_bias=+2.0`, seed7 | 4.75±1.17 | -0.123 | delta +0.052, same story |
+| 18 | `contra_bias=-2.0` (toward-food), seed42 | 10.50±1.30 | 0.113 | delta -0.021 — prior alone explains it |
+| 18 | `contra_bias=-2.0`, seed7 | 12.38±1.71 | **0.218** | delta +0.051 — project-record r, learning adds value |
+| 18 | `spatial_lr` (real hemisphere geometry), seed42 | 9.75±2.00 | 0.052 | delta -0.055, worse than hand-set bias |
+| 18 | `spatial_lr`, seed7 | 9.25±0.91 | 0.140 | delta +0.041, worse than hand-set bias |
+| 18 | `--place-code` (Gaussian pop code), seed42 | 5.50±1.39 | -0.035 | delta -0.037, regression vs. baseline |
+| 18 | `--place-code`, seed7 | 4.38±1.31 | 0.034 | delta +0.036, smallest positive delta of the four |
 
 **Diagnosis behind Task 13** (from `CANDIDATE_MECHANISMS.md`): the plasticity
 rule is left/right symmetric — every `sL` neuron gets identical injection,
@@ -145,15 +172,32 @@ btsp (13c-iii) showed weak positive movement worth remembering if candidate
 Full per-task detail, per-seed numbers, and run-artifact filenames are in
 `RESULTS.md`.
 
-## Immediate next step: not decided yet — options on the table
-No committed direction. Candidates, roughly in order of how much groundwork
-is already done:
+## Immediate next step: structural plasticity (Task 18's fallback item 4)
+Dave's ordered fallback list (spatial embedding → place-code → FEP feedback
+→ structural plasticity) is now down to its last item. Items 1-3 resolved
+in Task 18: spatial embedding not better than hand-set contra-bias,
+place-code regresses vs. baseline, FEP feedback already covered by Task 9.
+**Structural plasticity (activity-dependent synapse creation/pruning) is
+confirmed NOT built into `gpu_evolve.py`'s live GPU loop** — the module
+docstring literally says "fixed topology (no structural plasticity)", and
+no runtime rewiring code exists. Would need building from scratch — the
+biggest lift of the four fallback items, but also the one mechanism kind
+that could break seed42-style symmetric starts *during* training rather
+than via a fixed pre-set prior. Earlier CPU-only structural-plasticity work
+(`creature_embodied_structural.py`, pre-dates this GPU harness) found "no
+lift, possibly a slight cost" — worth rereading before rebuilding, may not
+transfer either way. Not started.
+
+Lower-priority candidates still on the table, roughly in order of how much
+groundwork is already done:
 1. **Push candidate A (wiring-guide) further** — only 1 data point (Task
    15), below baseline, but genuinely novel and low-dimensional (30 genes);
    more generations or a gain sweep before ruling it out.
 2. **Third-topology replication of Task 9 baseline** — currently 2/2
    positive (seed 42, seed 7); a seed-13 or similar run would raise
-   confidence it's not itself a topology-specific fluke.
+   confidence it's not itself a topology-specific fluke. (Also promised as
+   a 3rd-seed replication check on the contra-bias mechanism specifically
+   during Task 18 — never actually launched, still open if useful.)
 3. **Scale-up Task 9 baseline** — bigger pop/more generations, unknown if
    it plateaus or keeps climbing past pop48/gens60.
 4. **FEP + eye pool** (`--use-eye`) — untested; Task 8's null result used

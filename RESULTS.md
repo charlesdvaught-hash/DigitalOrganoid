@@ -1381,3 +1381,107 @@ same as the `asym` diagnostic — use it going forward as the default first
 check on any new candidate's champion, before or alongside food/steering-r.
 Sandbox scripts `diode_test.py`/`diode_test_v2.py` (not committed, scratch)
 hold the exploratory runs above.
+
+## Task 18 — structural priors on the sensor-motor interface (contralateral bias, spatial embedding, place-code), delta-metric methodology
+
+Dave's framing shift: a translator/interface layer between brain and body
+isn't inherently a cheat (real nervous systems have fixed transducer layers
+too) — the test is whether the mechanism biases *topology* while leaving
+weight sign/magnitude to evolve/learn normally. Four structural-prior
+mechanisms tried against this standard, all layered on the Task 9 FEP
+baseline (`--learning fep --fep-punish`), all evaluated with a **delta
+metric**: `delta = trained_steering_r - untrained_r_with_the_same_bias`.
+Positive delta = learning adds real value on top of what the prior gives
+for free. Flat/negative delta = the prior alone is doing the work (or
+learning adds nothing). This supersedes the earlier "null must be flat"
+bar — an innate directional reflex isn't itself anti-biological (real
+tropotaxis works this way); delta is the real test.
+
+**`guide_lat`** — 4 evolved lateral-bias genes layered on candidate A's
+guidance-code wiring, built before Dave's exact spec arrived. Superseded
+once the spec landed (must layer on the Task 9 weight genome directly, not
+candidate A's replace-the-genome system) — one partial seed42 run exists
+(`champion_guide_lat_seed42.npy`, r≈0.04) but was never pursued as the
+tested mechanism. Code remains committed, not otherwise used.
+
+**`contra_k`/`contra_bias` — contralateral connection-probability bias.**
+Adds `contra_k` extra plastic sL/sR↔mL/mR synapses at scaffold-build time;
+`contra_bias` sets only which pool-pair a new synapse is more likely to
+land in (crossed vs. uncrossed) via `p_cross = sigmoid(contra_bias)` —
+weight sign and magnitude are drawn from the same distribution regardless
+of bias (verified: identical weight distribution at bias=0 vs bias=±5).
+`contra_k=4`.
+
+*Crossed-favoring* (`contra_bias=+2.0`): untrained null strongly negative,
+r=-0.137 (seed42) / -0.175 (seed7), 8/8 negative both seeds — this bias
+actively points the wrong way. Trained: seed42 food 4.00±0.73, r=**-0.050**
+(delta **+0.087**); seed7 food 4.75±1.17, r=**-0.123** (delta **+0.052**).
+Both deltas positive — learning claws back some of what the bad prior
+costs — but absolute performance stays well below baseline on both food
+and r.
+
+*Uncrossed/toward-food-favoring* (`contra_bias=-2.0`): untrained null
+positive, r=0.134 (seed42) / 0.167 (seed7) — this bias alone already beats
+Task 9 baseline's trained r. Trained: seed42 food 10.50±1.30, r=**0.113**
+(8/8 positive, delta **-0.021**); seed7 food 12.38±1.71, r=**0.218** (8/8
+positive, delta **+0.051** — project-record r, but see below). seed42
+shows the prior alone explains the result (flat/negative delta); seed7
+shows learning still adding value on top of a strong prior.
+
+**`spatial_lr` — real hemisphere geometry.** No hand-set crossing
+probability at all: sL/mL get negative-x coordinates, sR/mR get
+positive-x, and the *existing, unmodified* distance-decay K-NN topology
+rule wires on that geometry (crossing is a side-effect of geometry, not a
+programmed rule). Untrained null: r=0.107 (seed42) / 0.099 (seed7).
+Trained: seed42 food 9.75±2.00, r=**0.052** (7/8 positive, delta
+**-0.055**); seed7 food 9.25±0.91, r=**0.140** (8/8 positive, 2nd-best r
+of any mechanism, delta **+0.041**).
+
+**Place+rate code** (bl1-inspired, built by a delegated subagent) — orthogonal
+to topology: replaces single-scalar-per-pool sensor injection with a
+Gaussian population code across each pool's 20 neurons (`--place-code`),
+normalized to preserve total injected current. Untrained null: the only
+mechanism with a genuinely **flat** null both seeds, r=+0.002 (seed42) /
+-0.002 (seed7) — this mechanism carries no innate directional bias at all,
+by construction. Trained: seed42 food 5.50±1.39, r=**-0.035** (0/8
+positive, delta **-0.037**, net *regression* vs. baseline's 0.080); seed7
+food 4.38±1.31, r=**+0.034** (6/8 positive, delta **+0.036**, smallest
+positive delta of the four mechanisms, still below baseline's 0.041).
+
+**The seed42/seed7 split, now confirmed across three unrelated mechanisms:**
+every structural-topology prior (contra-bias both signs, spatial_lr) shows
+seed7 delta positive and seed42 delta flat-to-negative. Place-code (no
+topology bias at all) breaks the *sign* pattern less cleanly but still
+underperforms on both seeds. This looks like a property of scaffold-seed
+42's specific random topology draw, not a property of any one mechanism —
+the same kind of seed-dependent non-replication Task 6's `surprise` rule
+showed earlier in the project (there with signs reversed).
+
+**Conclusion:** none of the four Task 18 mechanisms cleanly beats Task 9
+baseline with a consistent, replicating positive delta on both seeds.
+Toward-food contra-bias (`contra_bias=-2.0`) gets closest — best absolute r
+on record (0.218, seed7) and the only mechanism whose *null alone* beats
+baseline — but seed42's flat/negative delta means the prior, not the
+learning, is doing most of the work there. Spatial embedding is the
+"cleanest" structural prior conceptually (no hand-set probability, pure
+geometry) but its deltas are worse than the hand-set contra-bias, not
+better. Place-code's flat null is the methodologically cleanest control of
+the four, and it's the one mechanism that regresses on seed42. No item
+from Dave's fallback list produced a replicating win; item 3 (FEP feedback)
+was already covered by Task 9 and needed no new test. Item 4 (structural
+plasticity / activity-dependent rewiring) is confirmed **not built** into
+`gpu_evolve.py`'s live GPU loop (module docstring states "fixed topology,"
+no runtime rewiring code exists) — untried, biggest remaining lift of the
+four fallback items.
+
+**Status:** `contra_k`/`contra_bias` (commit `2bab854`), `spatial_lr`
+(commit `a4a2f03`), place-code `_place_encode()`/`--place-code` (commit
+`04f771e`) — all committed locally on the PC, all real production code in
+`gpu_evolve.py`. `guide_lat` also committed but not the tested-against-spec
+mechanism. Champions: `champion_contra_seed42b.npy`/`_seed7b.npy` (+2.0
+crossed), `champion_contra_neg_seed42.npy`/`_seed7.npy` (-2.0 uncrossed),
+`champion_spatial_seed42.npy`/`_seed7.npy`, `champion_placecode_seed42.npy`/
+`_seed7.npy`. Logs: `run_contra_seed42b.log`/`run_contra_seed7b.log`,
+`run_contra_neg_seed42.log`/`run_contra_neg_seed7.log`,
+`run_spatial_seed42.log`/`run_spatial_seed7.log`,
+`placecode_seed42.log`/`placecode_seed7.log`.
