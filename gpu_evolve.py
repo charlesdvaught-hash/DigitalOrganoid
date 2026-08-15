@@ -84,7 +84,8 @@ TARGET_G = 1.4
 # Topology (built once on CPU with numpy, identical algorithm to
 # creature_embodied.build_creature_network, then uploaded to the device).
 # --------------------------------------------------------------------------- #
-def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bias=0.0):
+def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bias=0.0,
+                          spatial_lr=False):
     rng = np.random.default_rng(seed)
     px = np.empty(N); py = np.empty(N); pz = np.empty(N)
     filled = 0
@@ -97,6 +98,24 @@ def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bi
         py[filled:filled + n] = take[:n, 1]
         pz[filled:filled + n] = take[:n, 2]
         filled += n
+
+    # Task 17, item 1 (Dave, per bl1's topology.py): give the sL/sR/mL/mR
+    # pools REAL, anatomically consistent coordinates instead of the fully
+    # random position every pool gets by default -- "left sensors physically
+    # left, left motor physically left." Just a hemisphere sign flip on the
+    # x-coordinate already sampled above (magnitude/y/z untouched); the SAME
+    # unmodified distance-decay K-NN rule below then wires purely on
+    # geometry, same as every other pool always has. No synapse existence,
+    # sign, or strength is set by hand here -- only where these 4 pools sit
+    # in space. Default spatial_lr=False leaves positions exactly as before
+    # (verified no-op).
+    if spatial_lr:
+        sL0, sL1 = POOLS['sL']; sR0, sR1 = POOLS['sR']
+        mL0, mL1 = POOLS['mL']; mR0, mR1 = POOLS['mR']
+        px[sL0:sL1] = -np.abs(px[sL0:sL1])
+        px[mL0:mL1] = -np.abs(px[mL0:mL1])
+        px[sR0:sR1] = np.abs(px[sR0:sR1])
+        px[mR0:mR1] = np.abs(px[mR0:mR1])
 
     types = np.where(rng.random(N) < fi, -1, 1).astype(np.int8)
     for (lo, hi) in POOLS.values():
@@ -1281,6 +1300,11 @@ def main():
                          'crossed/uncrossed); positive favors CROSSED (sL->mR, sR->mL, the real '
                          'decussation pattern); negative favors uncrossed. Fixed hyperparameter here '
                          '(not evolved) -- cheap version first per Dave.')
+    ap.add_argument('--spatial-lr', action='store_true',
+                    help="Task 17 item 1 -- give sL/mL negative-x, sR/mR positive-x coordinates "
+                         '(anatomically real placement, not a hand-set wiring rule), then let the '
+                         'existing unmodified distance-decay K-NN topology wire on that geometry '
+                         'same as it always does for every other pool.')
     ap.add_argument('--learning', type=str, default='stdp',
                     choices=['stdp', 'surprise', 'fep', 'eh', 'btsp', 'evolverule'],
                     help='stdp = reward-gated instantaneous STDP; surprise = eligibility x TD-error; '
@@ -1393,7 +1417,8 @@ def main():
     print(f'learning: {args.learning}  dense_k: {args.dense_k}  homeo: {args.homeo}', flush=True)
 
     scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k,
-                                     contra_k=args.contra_k, contra_bias=args.contra_bias)
+                                     contra_k=args.contra_k, contra_bias=args.contra_bias,
+                                     spatial_lr=args.spatial_lr)
     sim = BatchSim(scaffold, device)
     asym_masks = build_asym_masks(scaffold)
     evolve_rule = (args.learning == 'evolverule')
