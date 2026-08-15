@@ -1322,3 +1322,62 @@ scratch. `gpu_evolve.py` production changes (`hunt_score`, `hunt_score_v2`,
 `long_range_correlation`, `nearest`/`hits`/`wall` capture, `asym`
 diagnostic reuse) are real and committed; only their conclusions are
 negative.
+
+## Task 17 — the diode bench test: a new standard diagnostic, and it explains candidate #4
+
+Dave's framing: stop treating the whole embodied loop as the only way to
+inspect a candidate — model it like a microcontroller circuit, test the
+"diode" (the sL/sR→motor channel) on the bench before plugging it into the
+robot. Built a genuinely different kind of diagnostic from every Task 16
+attempt: instead of observing the network embedded in the full closed loop
+and inferring causation from correlation, **clamp the smell L/R sensor
+injection to a fixed value, freeze the body (so food/wall/hunger can't
+drift either), turn learning off, and read steady-state mL-mR.** No
+movement, no food layout, no wall reflex — nothing else in the loop can
+explain the result. Added as production code: `clamp_LR`/`freeze_motion`
+kwargs on `BatchSim.run()` (verified no-op at defaults) and `bench_diode()`,
+which sweeps clamped asymmetry from -1 to +1 and fits the response into two
+numbers — **bias** (turn tendency at symmetric input, a built-in spin/
+circle tendency unrelated to sensing) and **slope** (how much the turn
+actually changes per unit of sensor asymmetry — what real steering
+requires).
+
+Tested RAW (weights as evolution/init left them) and EXPRESSED (after one
+full embodied lifetime) on every major candidate, 3 independent lifetime
+replicates each to check the result isn't a fluke of one random life:
+
+| candidate | expressed bias (mean±spread) | expressed slope (mean±spread) |
+|---|---|---|
+| untrained null | -0.002 | ~0 (noise) |
+| Task9 baseline, seed42 | -0.004±0.002 | -0.001±0.001 (noise-level) |
+| Task9 baseline, seed7 | -0.006±0.005 | +0.002±0.001 (weak, consistent sign) |
+| **Cand#4 evolverule, seed7** | **-0.149±0.031** | -0.008±0.021 (sign flips — noise) |
+| **Cand#4 evolverule+rfit, seed42** | **+0.039±0.011** | +0.002±0.006 (sign flips — noise) |
+| Cand A wiring-guide, seed42 | -0.003±0.001 | -0.001±0.000 (indistinguishable from null) |
+
+**This explains candidate #4's whole profile in one result.** Its expressed
+weights carry a large, highly reliable BIAS — a near-constant turn tendency
+that barely depends on which side is actually stimulated — while its SLOPE
+(the thing that would make it real steering) is noise-level and flips sign
+across replicates. A large constant turn bias produces a spiral/circling
+movement pattern that sweeps more of the arena than an undirected wanderer
+(→ the ~2x food-count gain, Task 14), while contributing ~0 to a metric
+that specifically measures tracking of the *live, moment-to-moment* sensor
+asymmetry (→ the near-zero/noisy steering-r). Bias sign differs by
+topology/genome (-0.15 on seed7, +0.04 on the rfit/seed42 variant) but
+bias-dominates-slope holds both times, replicated 3/3 lifetimes each.
+
+Task 9 baseline and candidate A show neither a reliable bias nor a reliable
+slope at this bench-test resolution (T=800, frozen body, learning off) —
+baseline's real (if small) embodied steering-r must depend on something
+this static probe doesn't capture, most likely ongoing plasticity *during*
+actual foraging rather than a fixed property of a weight snapshot. Worth
+keeping in mind when using this test: it characterizes what a snapshot's
+wiring does when frozen and clamped, not what the live system does while
+still learning.
+
+**Status:** `bench_diode()` is now a permanent instrument in `gpu_evolve.py`,
+same as the `asym` diagnostic — use it going forward as the default first
+check on any new candidate's champion, before or alongside food/steering-r.
+Sandbox scripts `diode_test.py`/`diode_test_v2.py` (not committed, scratch)
+hold the exploratory runs above.

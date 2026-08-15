@@ -31,6 +31,22 @@ any of the distance/hunt-based metrics built this session, as evidence of
 real foraging competence without also checking steering r. Full
 investigation, per-metric detail: RESULTS.md Task 16.
 
+**Task 17 — new standard diagnostic, and it explains Task 16's mystery:**
+built `bench_diode()` per Dave's framing ("model it like a microcontroller
+— test the diode before plugging it into the robot"): clamp smell L/R to a
+fixed value, freeze the body, learning off, read steady-state mL-mR. No
+embodiment confound possible. Decomposes response into BIAS (turn tendency
+at symmetric input — a built-in spin, unrelated to sensing) and SLOPE (real
+gradient-tracking). **Candidate #4's expressed weights carry a large,
+highly reliable BIAS (-0.15 on seed7, +0.04 on the rfit/seed42 variant,
+replicated 3/3 independent lifetimes each) and a noise-level SLOPE** — this
+explains its whole profile: a constant turn sweeps more arena (→ the food
+gain) while contributing ~0 to a metric that needs live tracking (→ the
+noisy/near-zero steering-r). Task 9 baseline and candidate A show neither a
+reliable bias nor slope at this bench resolution. **Use `bench_diode()` as
+the default first check on any new candidate going forward**, alongside
+food/steering-r. Full detail: RESULTS.md Task 17.
+
 RESULTS.md and this file are up to date and committed locally on the PC —
 **push to GitHub still needed**, the cloud session can't push (403, repo
 not in its authorized set); push from the PC checkout when convenient.
@@ -75,6 +91,13 @@ into it" strategies; steering r isolates genuine gradient-following. Always
 check both. Replication protocol: any promising result on scaffold-seed 42
 gets rerun on `--scaffold-seed 7` before being trusted.
 
+**As of Task 17, also run `bench_diode()` on any new candidate's champion**
+(RAW genome and EXPRESSED post-lifetime weights, ideally 2-3 independent
+lifetime replicates to check the result isn't a fluke of one random life).
+It separates a fixed motor BIAS (spurious, inflates food count without real
+steering) from genuine SLOPE (asymmetry-tracking) in a way food count and
+steering-r alone can't — see RESULTS.md Task 17 for why this matters.
+
 ## Current best mechanism: FEP / predictability learning (Task 9)
 `--learning fep` (plain unmodulated Hebbian STDP, no dopamine gating) +
 `--fep-punish` (wall proximity or too-long-without-food triggers a burst of
@@ -104,6 +127,7 @@ Defaults: `--fep-punish-t 150 --fep-wall-thresh 0.7 --fep-timeout-steps 800`.
 | 14fu | evolverule + r-aware fitness bonus | 17.00±3.78 | -0.038 | r-bonus overfits to training seeds |
 | 15 | `--wiring guide` (candidate A, Dave's idea) | 2.25±0.70 | 0.002 | 1 data point, inconclusive |
 | 16 | behavioral metrics for #4's food gain | — | — | all 4 tried are tautological or fail null control |
+| 17 | `bench_diode()` — isolated open-loop probe | — | — | candidate #4 = large constant motor bias, not steering |
 
 **Diagnosis behind Task 13** (from `CANDIDATE_MECHANISMS.md`): the plasticity
 rule is left/right symmetric — every `sL` neuron gets identical injection,
@@ -134,10 +158,11 @@ is already done:
    it plateaus or keeps climbing past pop48/gens60.
 4. **FEP + eye pool** (`--use-eye`) — untested; Task 8's null result used
    `stdp` mode, may not generalize to FEP's plain-Hebbian rule.
-5. **Resolve the Task 16 metric mystery properly** — if worth the time,
-   the unexplained part (random weights matching every evolved champion on
-   hunt-style metrics, even after the wall-avoidance-reflex fix) may point
-   at something about the environment itself, not just the metric.
+5. **Try to fix candidate #4's bias-vs-slope imbalance directly** — now
+   that Task 17 shows *why* it doesn't steer (huge bias, no slope), a
+   natural next test is whatever might suppress the bias term specifically
+   (e.g. a symmetry constraint on the evolved rule genome, or bench-testing
+   mid-evolution to select against high-bias/low-slope champions).
 
 ## Lower-priority backlog, not yet touched
 - **FEP + eye pool** (`--use-eye`) — untested. Task 8's null result on
