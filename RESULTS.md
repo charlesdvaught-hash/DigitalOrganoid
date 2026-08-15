@@ -1485,3 +1485,78 @@ crossed), `champion_contra_neg_seed42.npy`/`_seed7.npy` (-2.0 uncrossed),
 `run_contra_neg_seed42.log`/`run_contra_neg_seed7.log`,
 `run_spatial_seed42.log`/`run_spatial_seed7.log`,
 `placecode_seed42.log`/`placecode_seed7.log`.
+
+## Task 19 — structural plasticity (Task 18 fallback item 4), the last item on the list, no signal
+
+Confirmed in Task 18 that `gpu_evolve.py`'s GPU loop had no structural
+plasticity at all ("fixed topology" per its own docstring) — not because it
+was disproven, but because the old CPU-only implementation used a sparse
+(pre, post, weight) edge list, and adding/removing edges per-genome breaks
+the batched `(B, n_plastic)` tensor trick the whole GPU port depends on
+(variable shape across a population can't be vectorized). Found the actual
+fix by reading bl1's real source (Dave supplied the repo): bl1 sidesteps
+this entirely by using a **dense N×N weight matrix**, where "no synapse" is
+just weight=0 — growth/pruning is only ever a value change, so the tensor
+shape never varies and it's trivially batchable. Their own comment says as
+much: "works with dense weight matrices only (MVP); BCOO/sparse support
+would require dynamic sparsity pattern changes JAX doesn't natively support
+efficiently." Also checked: bl1 documents structural plasticity as a
+feature but reports no benchmarked benefit anywhere in the repo — there was
+no actual "bl1 found it helped" result to explain or reconcile.
+
+**Implementation (adapting bl1's trick to our sparse format):** reused the
+existing `--contra-k`/`--contra-bias 0.0` candidate-synapse pool (no
+crossing-probability prior — pure candidate slots) as a fixed-shape
+substrate. Added a per-slot alive/dormant boolean state, `(B, n_struct)`,
+that never changes shape: dormant slots are forced to weight=0 every single
+step (not just at update time), so a "pruned" synapse is actually silent,
+not just weak. Every `--struct-every` (200) steps, dormant slots whose both
+endpoints' running firing rate exceed `--struct-activity-thresh` may grow
+(regrowing to their pre-assigned target weight, prob. `--struct-growth-rate`
+0.02); alive slots that have decayed below `--struct-prune-thresh-frac`
+(0.15) of their target may prune (prob. `--struct-prune-rate` 0.05). Slots
+start alive with probability `--struct-initial-alive-frac` (0.2). Verified:
+`n_struct=0` (default) is an exact no-op; `struct_plasticity=False` with
+candidate slots present behaves identically to plain `contra_k` (bias=0.0);
+`struct_plasticity=True` measurably changes weights and produces genuinely
+zero (not just small) weights on dormant slots.
+
+**Null control** (unevolved/raw init weights, no GA selection pressure at
+all, but `stdp_on=True` and `struct_plasticity=True` so structural rewiring
+and ordinary Hebbian learning both run for the full lifetime): the cleanest
+null of any Task 18/19 mechanism, essentially flat on both seeds —
+r=+0.008 (seed42), +0.016 (seed7). Makes sense: activity-dependent rewiring
+with no evolutionary shaping shouldn't spontaneously produce directional
+steering.
+
+**Trained** (`--learning fep --fep-punish --contra-k 4 --contra-bias 0.0
+--struct-plasticity`, standard eval config, both scaffold seeds):
+
+| seed | food | steering r | delta (r − null) |
+|---|---|---|---|
+| 42 | 5.88 ± 1.30 | **+0.018** | +0.010 |
+| 7  | 7.25 ± 1.54 | **+0.010** | -0.006 |
+
+Both r and delta are indistinguishable from noise — the smallest signal of
+any Task 18/19 mechanism, on both seeds, and food is below Task 9 baseline
+(7.75/10.62) on both seeds too. Unlike every prior structural-topology
+mechanism (contra-bias both signs, spatial_lr), there's no seed42-negative/
+seed7-positive split here either — both seeds simply show nothing.
+
+**Conclusion — Task 18's full fallback list is now closed, none beat
+baseline:** item 1 (spatial embedding) not better than the hand-set
+crossing bias; item 2 (place-code) net regression on both seeds; item 3
+(FEP feedback) already covered by Task 9, no new test needed; item 4
+(structural plasticity) no signal on either seed, weakest result of the
+four. Task 9's plain FEP+punishment baseline (r=0.080/0.041) remains the
+best-validated mechanism on record after five tasks (14-19) and nine
+distinct sub-mechanisms tried against it, with only `contra_bias=-2.0`
+(toward-food) on seed7 exceeding it in absolute terms (r=0.218) — and even
+that one's seed42 replication shows the prior, not the learning, doing the
+work (Task 18).
+
+**Status:** `struct_plasticity` and its CLI flags committed to
+`gpu_evolve.py` (commit `11cb140`). Champions: `champion_struct_seed42.npy`/
+`champion_struct_seed7.npy`. Logs: `run_struct_seed42.log`/
+`run_struct_seed7.log`. Null-control script (`struct_null.py`, sandbox-side
+scratch, not committed).

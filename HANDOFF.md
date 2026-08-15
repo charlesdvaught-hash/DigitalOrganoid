@@ -2,12 +2,15 @@
 
 ## Where things stand right now
 Shortlist items 0-4 of `CANDIDATE_MECHANISMS.md` are now all closed out,
-plus one Dave-proposed candidate (evo-devo guidance-code wiring), plus four
-structural-prior mechanisms on the sensor-motor interface (contralateral
-bias both signs, spatial embedding, place-code — Task 18). **None beat the
-Task 9 FEP baseline's steering correlation (r=0.080/0.041, seed 42/seed 7)
-with a consistent, replicating delta on both seeds.** Task 9 remains the
-best-validated mechanism on record.
+plus one Dave-proposed candidate (evo-devo guidance-code wiring), plus five
+structural-prior/rewiring mechanisms on the sensor-motor interface
+(contralateral bias both signs, spatial embedding, place-code, structural
+plasticity — Tasks 18-19). **None beat the Task 9 FEP baseline's steering
+correlation (r=0.080/0.041, seed 42/seed 7) with a consistent, replicating
+delta on both seeds.** Task 9 remains the best-validated mechanism on
+record, and **Dave's full ordered fallback list (spatial embedding →
+place-code → FEP feedback → structural plasticity) is now closed out** —
+none of the four beat baseline.
 
 **Task 18 — structural priors on the interface, delta-metric methodology:**
 tested whether biasing *topology* (crossing probability, or real hemisphere
@@ -24,6 +27,18 @@ regresses vs. baseline on both seeds. Confirmed pattern across 3 of 4
 mechanisms: seed7 delta positive, seed42 delta flat/negative — looks like a
 property of that topology draw, not any one mechanism. Full detail:
 RESULTS.md Task 18.
+
+**Task 19 — structural plasticity, the last fallback item, closes with no
+signal.** Read bl1's actual source (Dave supplied the repo): it sidesteps
+the GPU-batching problem with a dense N×N weight matrix (no synapse =
+weight 0, shape never varies) — adapted that trick to our sparse format as
+a fixed candidate-slot pool (reuses `contra_k`/`contra_bias=0.0`) with a
+per-slot alive/dormant state that activity-dependently grows/prunes, forced
+to exactly 0 every step while dormant. Cleanest null of any mechanism
+tried (r=+0.008/+0.016, seed42/seed7). Trained: r=+0.018/+0.010, delta
++0.010/-0.006 — indistinguishable from noise, weakest signal of every
+Task 18/19 mechanism, food also below baseline both seeds. Full detail:
+RESULTS.md Task 19.
 
 **Candidate #4 (evolve-the-plasticity-rule)** roughly doubles food count on
 both topologies (huge effect, biggest of the project) but does NOT reliably
@@ -155,6 +170,8 @@ Defaults: `--fep-punish-t 150 --fep-wall-thresh 0.7 --fep-timeout-steps 800`.
 | 18 | `spatial_lr`, seed7 | 9.25±0.91 | 0.140 | delta +0.041, worse than hand-set bias |
 | 18 | `--place-code` (Gaussian pop code), seed42 | 5.50±1.39 | -0.035 | delta -0.037, regression vs. baseline |
 | 18 | `--place-code`, seed7 | 4.38±1.31 | 0.034 | delta +0.036, smallest positive delta of the four |
+| 19 | `--struct-plasticity` (contra_k=4, bias=0.0), seed42 | 5.88±1.30 | 0.018 | delta +0.010 — no signal, weakest of all |
+| 19 | `--struct-plasticity`, seed7 | 7.25±1.54 | 0.010 | delta -0.006 — no signal, weakest of all |
 
 **Diagnosis behind Task 13** (from `CANDIDATE_MECHANISMS.md`): the plasticity
 rule is left/right symmetric — every `sL` neuron gets identical injection,
@@ -172,21 +189,22 @@ btsp (13c-iii) showed weak positive movement worth remembering if candidate
 Full per-task detail, per-seed numbers, and run-artifact filenames are in
 `RESULTS.md`.
 
-## Immediate next step: structural plasticity (Task 18's fallback item 4)
+## Immediate next step: not decided yet — Dave's fallback list is exhausted
 Dave's ordered fallback list (spatial embedding → place-code → FEP feedback
-→ structural plasticity) is now down to its last item. Items 1-3 resolved
-in Task 18: spatial embedding not better than hand-set contra-bias,
-place-code regresses vs. baseline, FEP feedback already covered by Task 9.
-**Structural plasticity (activity-dependent synapse creation/pruning) is
-confirmed NOT built into `gpu_evolve.py`'s live GPU loop** — the module
-docstring literally says "fixed topology (no structural plasticity)", and
-no runtime rewiring code exists. Would need building from scratch — the
-biggest lift of the four fallback items, but also the one mechanism kind
-that could break seed42-style symmetric starts *during* training rather
-than via a fixed pre-set prior. Earlier CPU-only structural-plasticity work
-(`creature_embodied_structural.py`, pre-dates this GPU harness) found "no
-lift, possibly a slight cost" — worth rereading before rebuilding, may not
-transfer either way. Not started.
+→ structural plasticity) is now fully closed (Tasks 18-19), all four
+items tested against the delta metric, none beat Task 9 baseline:
+1. spatial embedding — not better than hand-set contra-bias (Task 18)
+2. place-code — regresses vs. baseline both seeds (Task 18)
+3. FEP feedback — already covered by Task 9, no new test needed
+4. structural plasticity — built (bl1-inspired, dense-matrix trick adapted
+   to sparse format), cleanest null of any mechanism, but trained result is
+   pure noise on both seeds, no signal at all (Task 19)
+
+Task 9's plain FEP+punishment baseline still stands unbeaten after 5 tasks
+(14-19) and 9 sub-mechanisms tried against it. `contra_bias=-2.0` (Task 18)
+is the only one that exceeded it in absolute r (0.218, seed7), but its own
+seed42 replication shows the untrained prior — not learning — explains
+most of that. No committed direction for what's next; candidates below.
 
 Lower-priority candidates still on the table, roughly in order of how much
 groundwork is already done:
