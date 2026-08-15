@@ -248,22 +248,50 @@ class BatchSim:
 
         # ---- Task 13 candidate A (evo-devo guidance-code wiring) ----
         pool_id = build_pool_id(N)
-        self.pre_pool_id = t(pool_id[pre[plastic]], torch.long)
-        self.post_pool_id = t(pool_id[post[plastic]], torch.long)
+        pre_pool_id_np = pool_id[pre[plastic]]
+        post_pool_id_np = pool_id[post[plastic]]
+        self.pre_pool_id = t(pre_pool_id_np, torch.long)
+        self.post_pool_id = t(post_pool_id_np, torch.long)
         self.n_pools = N_POOLS
 
-    def gate_weights(self, base_weight, guide_code, gain=4.0):
+        # ---- Task 17 (Dave's "solid starting structure" -- contralateral
+        # wiring bias): which plastic synapses are one of the 4 sensor<->
+        # motor pool pairs (sL-mL, sL-mR, sR-mL, sR-mR)? Gives evolution a
+        # direct, dedicated, low-dimensional knob for exactly the structural
+        # degree of freedom real nervous systems specialize (decussation),
+        # instead of hoping the ambient per-pool code-compatibility formula
+        # stumbles onto it. lat_idx is -1 (no bias applies) for every other
+        # synapse; lat_mask marks which ones DO apply. ----
+        lat_idx_np = build_lat_idx(pre_pool_id_np, post_pool_id_np)
+        self.lat_idx = t(lat_idx_np, torch.long)
+        self.lat_mask = t(lat_idx_np >= 0, torch.bool)
+
+    def gate_weights(self, base_weight, guide_code, gain=4.0, lat_bias=None):
         """base_weight: (n_plastic,) fixed sign+magnitude init (e.g.
         self.init_weight). guide_code: (B, n_pools, code_dim), evolved.
         Returns (B, n_plastic) gated initial weight: base_weight * sigmoid(
         gain * dot(code[pre_pool], code[post_pool])) -- pools whose evolved
         codes are compatible (high dot product) start strongly connected;
         incompatible ones start near zero. gain=0 / code all-zero collapses
-        to gate=0.5 everywhere (symmetric, no bias -- the neutral start)."""
+        to gate=0.5 everywhere (symmetric, no bias -- the neutral start).
+
+        lat_bias: optional (B, 4) evolved genes, one per sensor<->motor pool
+        pair (sL-mL, sL-mR, sR-mL, sR-mR order, see LAT_PAIRS) -- an
+        additional additive logit shift applied ONLY to synapses in one of
+        those 4 pairs, on top of the ordinary code-compatibility gate.
+        Structural (weight-space initial-strength bias, evolved not
+        hand-set), not a computed control law -- lifetime plasticity is
+        still free to overwrite it entirely. Default None leaves every
+        prior result unchanged (verified no-op)."""
         code_pre = guide_code[:, self.pre_pool_id, :]    # (B, n_plastic, code_dim)
         code_post = guide_code[:, self.post_pool_id, :]
         compat = (code_pre * code_post).sum(dim=-1)       # (B, n_plastic)
-        gate = torch.sigmoid(gain * compat)
+        logit = gain * compat
+        if lat_bias is not None:
+            lat_idx_safe = self.lat_idx.clamp(min=0)
+            lat_term = lat_bias[:, lat_idx_safe] * self.lat_mask.unsqueeze(0).to(lat_bias.dtype)
+            logit = logit + lat_term
+        gate = torch.sigmoid(logit)
         return base_weight.unsqueeze(0) * gate
 
     def run(self, weight_plastic, T, reflex_scale, stdp_on=True, record_steering=False,
@@ -1115,6 +1143,23 @@ def build_pool_id(N):
     return np.array([POOL_NAME_TO_ID[pool_of_index(i, POOLS)] for i in range(N)], dtype=np.int64)
 
 
+# Task 17 lateral-bias structural genes (see BatchSim.gate_weights docstring)
+LAT_PAIRS = [('sL', 'mL'), ('sL', 'mR'), ('sR', 'mL'), ('sR', 'mR')]
+LAT_PAIR_TO_ID = {p: i for i, p in enumerate(LAT_PAIRS)}
+
+
+def build_lat_idx(pre_pool_id_np, post_pool_id_np):
+    """(n_plastic,) int array: index into LAT_PAIRS (0-3) if this synapse's
+    (pre_pool, post_pool) is one of the 4 sensor<->motor pairs, else -1."""
+    id_to_name = {v: k for k, v in POOL_NAME_TO_ID.items()}
+    idx = np.full(len(pre_pool_id_np), -1, dtype=np.int64)
+    for i in range(len(pre_pool_id_np)):
+        key = (id_to_name[int(pre_pool_id_np[i])], id_to_name[int(post_pool_id_np[i])])
+        if key in LAT_PAIR_TO_ID:
+            idx[i] = LAT_PAIR_TO_ID[key]
+    return idx
+
+
 def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=False):
     """One genome-batch's full lifetime: optional bootcamp phase (easy,
     dense-reward, annealed exploration -- shapes weights) followed by the
@@ -1127,7 +1172,8 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
     topology's own fixed init_weight (shared, non-evolved), and the rates
     are gathered per-synapse inside sim.run() via rule_a_plus/rule_a_minus."""
     evolve_rule = (args.learning == 'evolverule')
-    wiring_guide = (args.wiring == 'guide')
+    wiring_guide = (args.wiring in ('guide', 'guide_lat'))
+    wiring_lat = (args.wiring == 'guide_lat')
     rule_kw = {}
     if evolve_rule:
         genome_batch = weight_plastic
@@ -1138,8 +1184,10 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
     elif wiring_guide:
         genome_batch = weight_plastic
         B = genome_batch.shape[0]
-        guide_code = genome_batch.view(B, sim.n_pools, -1)
-        wp = sim.gate_weights(sim.init_weight, guide_code, gain=args.guide_gain)
+        n_code_genes = sim.n_pools * args.guide_code_dim
+        guide_code = genome_batch[:, :n_code_genes].view(B, sim.n_pools, -1)
+        lat_bias = genome_batch[:, n_code_genes:] if wiring_lat else None
+        wp = sim.gate_weights(sim.init_weight, guide_code, gain=args.guide_gain, lat_bias=lat_bias)
     else:
         wp = weight_plastic
     fep_kw = dict(fep_punish=args.fep_punish, fep_punish_t=args.fep_punish_t,
@@ -1200,14 +1248,20 @@ def main():
     ap.add_argument('--rule-rate-max', type=float, default=0.05,
                     help="learning='evolverule' only: upper bound on evolved per-pair A_PLUS/A_MINUS "
                          '(genes init at the fep defaults, 0.008/0.010)')
-    ap.add_argument('--wiring', type=str, default='none', choices=['none', 'guide'],
+    ap.add_argument('--wiring', type=str, default='none', choices=['none', 'guide', 'guide_lat'],
                     help='none = unchanged (per-synapse weight genome, as picked by --learning). '
                          'guide = evo-devo guidance-code wiring (CANDIDATE_MECHANISMS.md #A, '
                          'Eph/ephrin-inspired): genome becomes a tiny per-POOL code vector instead '
                          'of per-synapse weights; initial synaptic weight = fixed topology magnitude '
                          '* sigmoid(gain * code_pre . code_post), applied once before the lifetime, '
-                         'then --learning plasticity runs on top as normal. Not combinable with '
-                         "--learning evolverule (both replace the weight-init source).")
+                         "then --learning plasticity runs on top as normal. guide_lat (Task 17, Dave's "
+                         '"solid starting structure" -- contralateral wiring bias): same as guide, '
+                         'plus 4 extra evolved genes, one per sensor<->motor pool pair (sL-mL, sL-mR, '
+                         'sR-mL, sR-mR), giving evolution a direct low-dimensional knob for exactly '
+                         'the structural degree of freedom real nervous systems specialize '
+                         '(decussation), instead of hoping the ambient per-pool code formula finds it. '
+                         'Not combinable with --learning evolverule (both replace the weight-init '
+                         "source).")
     ap.add_argument('--guide-code-dim', type=int, default=3,
                     help="--wiring guide only: dimensionality of each pool's evolved guidance code")
     ap.add_argument('--guide-gain', type=float, default=4.0,
@@ -1297,17 +1351,24 @@ def main():
     sim = BatchSim(scaffold, device)
     asym_masks = build_asym_masks(scaffold)
     evolve_rule = (args.learning == 'evolverule')
-    wiring_guide = (args.wiring == 'guide')
+    wiring_guide = (args.wiring in ('guide', 'guide_lat'))
+    wiring_lat = (args.wiring == 'guide_lat')
     if evolve_rule and wiring_guide:
-        raise SystemExit("--learning evolverule and --wiring guide both replace the weight-init "
-                          "source and are not combinable yet -- pick one.")
+        raise SystemExit("--learning evolverule and --wiring guide/guide_lat both replace the "
+                          "weight-init source and are not combinable yet -- pick one.")
 
     if wiring_guide:
-        n_genes = sim.n_pools * args.guide_code_dim
-        print(f'genes (guidance codes, {sim.n_pools} pools x {args.guide_code_dim}-dim): {n_genes}', flush=True)
-        lo = np.full(n_genes, -3.0)
-        hi = np.full(n_genes, 3.0)
-        base_genome = np.zeros(n_genes)  # neutral start: gate=0.5 everywhere
+        n_code_genes = sim.n_pools * args.guide_code_dim
+        n_lat_genes = 4 if wiring_lat else 0
+        n_genes = n_code_genes + n_lat_genes
+        print(f'genes (guidance codes, {sim.n_pools} pools x {args.guide_code_dim}-dim'
+              + (f' + {n_lat_genes} lateral-bias)' if wiring_lat else ')') + f': {n_genes}', flush=True)
+        lo = np.concatenate([np.full(n_code_genes, -3.0), np.full(n_lat_genes, -5.0)])
+        hi = np.concatenate([np.full(n_code_genes, 3.0), np.full(n_lat_genes, 5.0)])
+        # neutral start: gate=0.5 everywhere for both codes AND the lateral-
+        # bias genes -- evolution has to discover any structure, crossed or
+        # uncrossed, from a flat prior; nothing here says which is correct.
+        base_genome = np.zeros(n_genes)
     elif evolve_rule:
         n_genes = 2 * sim.n_pairs
         print(f'genes (plasticity-rule coefficients, {sim.n_pairs} pool-pairs): {n_genes}', flush=True)
@@ -1393,6 +1454,11 @@ def main():
 
     np.save(args.out, champion)
     print(f'\nchampion saved to {args.out}', flush=True)
+
+    if wiring_lat:
+        lat_genes = champion[-4:]
+        for (pn, qn), v in zip(LAT_PAIRS, lat_genes):
+            print(f'champion lateral-bias gene {pn}->{qn}: {v:+.4f}', flush=True)
 
     if not (evolve_rule or wiring_guide):
         champ_asym_L, champ_asym_R = compute_asym(champion, asym_masks)
