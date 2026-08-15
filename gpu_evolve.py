@@ -245,11 +245,20 @@ def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bi
 # plastic-synapse weight tensor (B, n_plastic) differs per batch row.
 # --------------------------------------------------------------------------- #
 class BatchSim:
-    def __init__(self, scaffold, device, dtype=torch.float32):
+    def __init__(self, scaffold, device, dtype=torch.float32, n_struct=0):
         self.device = device
         self.dtype = dtype
         N = scaffold['N']
         self.N = N
+        # Task 18 fallback item 4 (structural plasticity, bl1-inspired): the
+        # LAST n_struct plastic synapses are treated as candidate slots that
+        # can be dormant (silent, weight forced to 0 every step) or alive
+        # (contributing their pre-assigned weight, evolved/init same as any
+        # other synapse). Caller is responsible for making n_struct line up
+        # with the trailing contra_k-added block (contra_k>0, dense_k=0) --
+        # see build_scaffold_numpy/main(). n_struct=0 (default) is a total
+        # no-op: no candidate slots exist, nothing here does anything.
+        self.n_struct = n_struct
         types = scaffold['types']
         pre = scaffold['pre']; post = scaffold['post']; is_reflex = scaffold['is_reflex']
         plastic = ~is_reflex
@@ -315,6 +324,20 @@ class BatchSim:
         self.n_pairs = n_pairs
         self.pair_labels = pair_labels
         self.init_weight = t(scaffold['weight'][plastic])
+
+        # ---- Task 18 item 4: candidate-slot bookkeeping for structural
+        # plasticity. struct_slice picks out the trailing n_struct plastic
+        # synapses (the contra_k-added block, contra_bias=0.0 -- no
+        # crossing-probability prior, purely candidate slots). struct_pre/
+        # struct_post are their (N,)-space endpoints, used to gather each
+        # slot's own pre/post running firing rate every struct_every steps.
+        if n_struct > 0:
+            self.struct_slice = slice(self.n_plastic - n_struct, self.n_plastic)
+            self.struct_pre = self.pre_p[self.struct_slice]
+            self.struct_post = self.post_p[self.struct_slice]
+            self.struct_target_w = self.init_weight[self.struct_slice].clone()
+        else:
+            self.struct_slice = None
 
         # ---- Task 13 candidate A (evo-devo guidance-code wiring) ----
         pool_id = build_pool_id(N)
@@ -386,7 +409,10 @@ class BatchSim:
             homeo='mult', homeo_every=20, eh_lr=0.05, eh_bar_decay=0.8,
             cp_steps=10**9, cp_decay_len=1, cp_floor=1.0, fep_punish_gate_steps=0,
             btsp_decay=0.999, btsp_lr=0.05, rule_a_plus=None, rule_a_minus=None,
-            clamp_LR=None, freeze_motion=False, place_code=False):
+            clamp_LR=None, freeze_motion=False, place_code=False,
+            struct_plasticity=False, struct_every=200, struct_growth_rate=0.02,
+            struct_prune_rate=0.05, struct_activity_thresh=0.02,
+            struct_prune_thresh_frac=0.15, struct_initial_alive_frac=0.2):
         """weight_plastic: (B, n_plastic) tensor, evolves in place and is
         returned updated. reflex_scale: python float, applied uniformly this
         lifetime (curriculum). Returns dict with food_eaten (B,) and, if
@@ -500,7 +526,28 @@ class BatchSim:
         blended at band edges, total injected current per pool unchanged.
         A richer, more differentiable-feeling gradient for the existing
         Hebbian/STDP machinery to build structure from than a single
-        repeated scalar."""
+        repeated scalar.
+
+        struct_plasticity: Task 18 item 4 (Dave's fallback list, bl1-
+        inspired activity-dependent synapse creation/pruning). Requires the
+        scaffold/BatchSim to have been built with n_struct>0 candidate slots
+        (contra_k>0, contra_bias=0.0 -- no crossing-probability prior, pure
+        candidate pool). Default False: candidate slots (if present) behave
+        exactly like ordinary contra_k synapses, always alive -- a null-
+        control layer, verified no-op. True: each candidate slot starts
+        alive with probability struct_initial_alive_frac; every
+        struct_every steps, dormant slots with BOTH endpoints' running
+        firing rate above struct_activity_thresh may become alive (prob.
+        struct_growth_rate, weight restored to its pre-assigned target
+        magnitude), and alive slots whose current |weight| has decayed
+        below struct_prune_thresh_frac of that target may become dormant
+        (prob. struct_prune_rate). Dormant slots are forced to weight=0
+        EVERY step (not just at struct_every), so a silent synapse is
+        actually silent, not just weak -- ordinary Hebbian potentiation
+        cannot creep a dormant slot back up on its own. This is real
+        activity-dependent rewiring on a fixed tensor shape (bl1's own
+        trick: dense weight matrix, where "no synapse" = weight 0, sidesteps
+        JAX/PyTorch's inability to batch variable-shape sparsity patterns)."""
         dev, dt = self.device, self.dtype
         B = weight_plastic.shape[0]
         N = self.N
@@ -545,6 +592,13 @@ class BatchSim:
         if fep_punish:
             steps_since_food = torch.zeros(B, device=dev, dtype=dt)
             punish_timer = torch.zeros(B, device=dev, dtype=dt)
+
+        do_struct = struct_plasticity and self.struct_slice is not None
+        if do_struct:
+            struct_alive = (torch.rand(B, self.n_struct, device=dev, dtype=dt)
+                             < struct_initial_alive_frac)
+            wp = wp.clone()
+            wp[:, self.struct_slice] = wp[:, self.struct_slice] * struct_alive.to(dt)
 
         sub_homeo = (homeo == 'sub')
         if sub_homeo:
@@ -829,6 +883,36 @@ class BatchSim:
                         wp = torch.where(self.exc_mask.unsqueeze(0),
                                          torch.clamp(wp, 0.0, W_MAX),
                                          torch.clamp(wp, -W_MAX, 0.0))
+
+            if do_struct:
+                if stdp_on and (t + 1) % struct_every == 0:
+                    pre_rate = firing_rate[:, self.struct_pre]    # (B, n_struct)
+                    post_rate = firing_rate[:, self.struct_post]  # (B, n_struct)
+                    active_pair = (pre_rate > struct_activity_thresh) & (post_rate > struct_activity_thresh)
+
+                    grow_elig = (~struct_alive) & active_pair
+                    grow_draw = torch.rand(B, self.n_struct, device=dev, dtype=dt) < struct_growth_rate
+                    newly_alive = grow_elig & grow_draw
+
+                    cur_w = wp[:, self.struct_slice]
+                    weak = cur_w.abs() < (struct_prune_thresh_frac * self.struct_target_w.abs().unsqueeze(0))
+                    prune_elig = struct_alive & weak
+                    prune_draw = torch.rand(B, self.n_struct, device=dev, dtype=dt) < struct_prune_rate
+                    newly_dead = prune_elig & prune_draw
+
+                    struct_alive = (struct_alive | newly_alive) & ~newly_dead
+                    wp = wp.clone()
+                    regrown = self.struct_target_w.unsqueeze(0).expand(B, -1)
+                    wp[:, self.struct_slice] = torch.where(newly_alive, regrown, wp[:, self.struct_slice])
+                    wp[:, self.struct_slice] = wp[:, self.struct_slice] * struct_alive.to(dt)
+                else:
+                    # Every step (not just struct_every), force dormant
+                    # slots to exactly 0 -- a silent synapse is actually
+                    # silent, ordinary Hebbian/homeo updates above cannot
+                    # creep a dormant slot's weight back up between growth
+                    # checks.
+                    wp = wp.clone()
+                    wp[:, self.struct_slice] = wp[:, self.struct_slice] * struct_alive.to(dt)
 
             energy = torch.clamp(energy, 0.0, 1.0)
             fatigue = torch.clamp(fatigue, 0.0, 1.0)
@@ -1301,6 +1385,15 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
     cp_kw = dict(cp_steps=args.cp_steps, cp_decay_len=args.cp_decay_len, cp_floor=args.cp_floor)
     btsp_kw = dict(btsp_decay=args.btsp_decay, btsp_lr=args.btsp_lr)
     place_code = getattr(args, 'place_code', False)
+    struct_kw = dict(
+        struct_plasticity=getattr(args, 'struct_plasticity', False),
+        struct_every=getattr(args, 'struct_every', 200),
+        struct_growth_rate=getattr(args, 'struct_growth_rate', 0.02),
+        struct_prune_rate=getattr(args, 'struct_prune_rate', 0.05),
+        struct_activity_thresh=getattr(args, 'struct_activity_thresh', 0.02),
+        struct_prune_thresh_frac=getattr(args, 'struct_prune_thresh_frac', 0.15),
+        struct_initial_alive_frac=getattr(args, 'struct_initial_alive_frac', 0.2),
+    )
     if args.bootcamp:
         boot_out = sim.run(wp, args.boot_t, reflex_scale, stdp_on=True,
                            learning=args.learning, elig_decay=args.elig_decay,
@@ -1312,13 +1405,13 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
                            motor_noise_end=args.boot_noise_end,
                            use_eye=args.use_eye, place_code=place_code,
                            **fep_kw, **homeo_kw, **eh_kw,
-                           **cp_kw, **btsp_kw, **rule_kw)
+                           **cp_kw, **btsp_kw, **rule_kw, **struct_kw)
         wp = boot_out['weight_plastic']
     return sim.run(wp, T, reflex_scale, stdp_on=True, record_steering=record_steering,
                    learning=args.learning, elig_decay=args.elig_decay,
                    elig_lr=args.elig_lr, value_lr=args.value_lr, use_eye=args.use_eye,
                    place_code=place_code,
-                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw, **rule_kw)
+                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw, **rule_kw, **struct_kw)
 
 
 def main():
@@ -1366,6 +1459,20 @@ def main():
                          'value (tiled 0..1 across the pool), smoothly blended at band edges, '
                          'total injected current per pool unchanged. Default False leaves every '
                          'prior result unchanged (verified no-op).')
+    ap.add_argument('--struct-plasticity', action='store_true',
+                    help="Task 18 item 4 (Dave's fallback list, bl1-inspired) -- activity-dependent "
+                         'synapse creation/pruning over the --contra-k candidate pool (requires '
+                         '--contra-k > 0, --contra-bias 0.0, --dense-k 0). Candidate slots start '
+                         'alive with prob. --struct-initial-alive-frac; every --struct-every steps, '
+                         'dormant slots whose both endpoints are active may grow, alive slots that '
+                         'have decayed weak may prune. Default False leaves candidate slots always '
+                         'alive (ordinary contra_k behavior, verified no-op).')
+    ap.add_argument('--struct-every', type=int, default=200)
+    ap.add_argument('--struct-growth-rate', type=float, default=0.02)
+    ap.add_argument('--struct-prune-rate', type=float, default=0.05)
+    ap.add_argument('--struct-activity-thresh', type=float, default=0.02)
+    ap.add_argument('--struct-prune-thresh-frac', type=float, default=0.15)
+    ap.add_argument('--struct-initial-alive-frac', type=float, default=0.2)
     ap.add_argument('--learning', type=str, default='stdp',
                     choices=['stdp', 'surprise', 'fep', 'eh', 'btsp', 'evolverule'],
                     help='stdp = reward-gated instantaneous STDP; surprise = eligibility x TD-error; '
@@ -1475,12 +1582,20 @@ def main():
     print(f'device: {device}', flush=True)
     if device.type == 'cuda':
         print(f'GPU: {torch.cuda.get_device_name(0)}', flush=True)
-    print(f'learning: {args.learning}  dense_k: {args.dense_k}  homeo: {args.homeo}', flush=True)
+    print(f'learning: {args.learning}  dense_k: {args.dense_k}  homeo: {args.homeo}  '
+          f'struct_plasticity: {args.struct_plasticity}', flush=True)
 
     scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k,
                                      contra_k=args.contra_k, contra_bias=args.contra_bias,
                                      spatial_lr=args.spatial_lr)
-    sim = BatchSim(scaffold, device)
+    n_struct = 0
+    if args.struct_plasticity:
+        if args.contra_k <= 0 or args.dense_k != 0:
+            raise SystemExit('--struct-plasticity requires --contra-k > 0 and --dense-k 0 '
+                              '(candidate slots must be exactly the trailing contra_k block).')
+        mL0, mL1 = POOLS['mL']; mR0, mR1 = POOLS['mR']
+        n_struct = args.contra_k * ((mL1 - mL0) + (mR1 - mR0))
+    sim = BatchSim(scaffold, device, n_struct=n_struct)
     asym_masks = build_asym_masks(scaffold)
     evolve_rule = (args.learning == 'evolverule')
     wiring_guide = (args.wiring in ('guide', 'guide_lat'))
