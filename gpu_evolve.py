@@ -84,7 +84,7 @@ TARGET_G = 1.4
 # Topology (built once on CPU with numpy, identical algorithm to
 # creature_embodied.build_creature_network, then uploaded to the device).
 # --------------------------------------------------------------------------- #
-def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0):
+def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bias=0.0):
     rng = np.random.default_rng(seed)
     px = np.empty(N); py = np.empty(N); pz = np.empty(N)
     filled = 0
@@ -181,6 +181,41 @@ def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0):
         post = np.concatenate([post, np.array(post_d, dtype=np.int64)])
         weight = np.concatenate([weight, np.array(w_d, dtype=np.float64)])
         is_reflex = np.concatenate([is_reflex, np.zeros(len(pre_d), dtype=bool)])
+
+    # Task 17 (Dave's "contralateral structural bias, crossing probability
+    # only, sign free" -- topology-only prior, per his own explicit line:
+    # "Legit -- contralateral connection probability/density ... Sign,
+    # weight, and gain still evolved or learned. Cheat -- crossed synapses
+    # initialized excitatory at usable strength."). Adds contra_k extra
+    # PLASTIC sensor->motor synapses per motor neuron, same as dense_k above
+    # (same weight-init formula: abs(randn)*type*0.15, sign from the
+    # presynaptic neuron's own Dale-principle type -- nothing hand-tuned or
+    # task-informed), but restricted to sL/sR->mL/mR specifically and with a
+    # crossing-probability bias: contra_bias=0.0 is neutral (50/50 crossed/
+    # uncrossed, unbiased density addition); positive favors CROSSED pairs
+    # (sL->mR, sR->mL, the real-nervous-system decussation pattern); negative
+    # favors uncrossed. Weight SIGN and MAGNITUDE are never touched by this
+    # bias -- only which pool-pair a new synapse is more likely to land in.
+    # Default contra_k=0 leaves the scaffold exactly as before (verified
+    # no-op).
+    if contra_k > 0:
+        p_cross = 1.0 / (1.0 + np.exp(-contra_bias))
+        pre_c = []; post_c = []; w_c = []
+        for mp in ('mL', 'mR'):
+            t0, t1 = POOLS[mp]
+            crossed_sp = 'sR' if mp == 'mL' else 'sL'
+            uncrossed_sp = 'sL' if mp == 'mL' else 'sR'
+            for tpos in range(t0, t1):
+                for _ in range(contra_k):
+                    sp = crossed_sp if rng.random() < p_cross else uncrossed_sp
+                    s0, s1 = POOLS[sp]
+                    spos = rng.integers(s0, s1)
+                    pre_c.append(spos); post_c.append(tpos)
+                    w_c.append(abs(rng.standard_normal()) * types[spos] * 0.15)
+        pre = np.concatenate([pre, np.array(pre_c, dtype=np.int64)])
+        post = np.concatenate([post, np.array(post_c, dtype=np.int64)])
+        weight = np.concatenate([weight, np.array(w_c, dtype=np.float64)])
+        is_reflex = np.concatenate([is_reflex, np.zeros(len(pre_c), dtype=bool)])
 
     return dict(N=N, types=types, a=a, b=b, c=c, d=d,
                 pre=pre, post=post, weight=weight, is_reflex=is_reflex)
@@ -1236,6 +1271,16 @@ def main():
     ap.add_argument('--out', type=str, default='champion_gpu_curriculum.npy')
     ap.add_argument('--dense-k', type=int, default=0,
                     help='extra plastic sensor->motor synapses per motor neuron (round 2 scaffold)')
+    ap.add_argument('--contra-k', type=int, default=0,
+                    help="Task 17 'contralateral structural bias' -- extra plastic sL/sR->mL/mR "
+                         'synapses per motor neuron, topology density only (weight sign/magnitude '
+                         'still drawn from the standard init distribution, never hand-set). '
+                         'Combine with --contra-bias; default 0 = mechanism off (no-op).')
+    ap.add_argument('--contra-bias', type=float, default=0.0,
+                    help='crossing-probability bias for --contra-k synapses: 0.0 = neutral (50/50 '
+                         'crossed/uncrossed); positive favors CROSSED (sL->mR, sR->mL, the real '
+                         'decussation pattern); negative favors uncrossed. Fixed hyperparameter here '
+                         '(not evolved) -- cheap version first per Dave.')
     ap.add_argument('--learning', type=str, default='stdp',
                     choices=['stdp', 'surprise', 'fep', 'eh', 'btsp', 'evolverule'],
                     help='stdp = reward-gated instantaneous STDP; surprise = eligibility x TD-error; '
@@ -1347,7 +1392,8 @@ def main():
         print(f'GPU: {torch.cuda.get_device_name(0)}', flush=True)
     print(f'learning: {args.learning}  dense_k: {args.dense_k}  homeo: {args.homeo}', flush=True)
 
-    scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k)
+    scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k,
+                                     contra_k=args.contra_k, contra_bias=args.contra_bias)
     sim = BatchSim(scaffold, device)
     asym_masks = build_asym_masks(scaffold)
     evolve_rule = (args.learning == 'evolverule')
