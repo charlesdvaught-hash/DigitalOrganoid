@@ -189,7 +189,7 @@ btsp (13c-iii) showed weak positive movement worth remembering if candidate
 Full per-task detail, per-seed numbers, and run-artifact filenames are in
 `RESULTS.md`.
 
-## Immediate next step: not decided yet — Dave's fallback list is exhausted
+## Immediate next step (Dave, Aug 15): Task 20 — capacity ceiling test
 Dave's ordered fallback list (spatial embedding → place-code → FEP feedback
 → structural plasticity) is now fully closed (Tasks 18-19), all four
 items tested against the delta metric, none beat Task 9 baseline:
@@ -204,7 +204,51 @@ Task 9's plain FEP+punishment baseline still stands unbeaten after 5 tasks
 (14-19) and 9 sub-mechanisms tried against it. `contra_bias=-2.0` (Task 18)
 is the only one that exceeded it in absolute r (0.218, seed7), but its own
 seed42 replication shows the untrained prior — not learning — explains
-most of that. No committed direction for what's next; candidates below.
+most of that.
+
+**Dave's question after the fallback list closed out with nothing: every
+fix tried has varied the SEARCH METHOD (which rule finds good weights) —
+none has asked whether the fixed topology's weight space contains a good
+answer at all.** Real risk this is founded on: `SYN_GAIN`/`W_MAX`/homeostasis
+targets were all tuned in Task 1 under REFLEX-INTACT conditions (network
+barely has to do anything, reflex arcs carry the mapping) and never
+re-derived for the no-reflex regime every mechanism since has actually run
+in. N=600/K=10 topology was chosen the same way, same era, never re-swept
+either. And the one time real optimization power was thrown at this (Task
+6: pop 48 x 100 gens, dense sensor-motor wiring) training fitness nearly
+doubled but held-out steering stayed flat zero — read at the time as
+"overfitting to training seeds," but equally consistent with "this
+topology has no good static solution to find." Nothing has ever
+distinguished those two explanations.
+
+**Task 20 spec:** freeze the topology (standard scaffold, scaffold-seed 42
++ seed 7), turn OFF all online plasticity during evaluation (`stdp_on=
+False`, static weight vector held fixed through the full embodied
+lifetime -- no STDP/FEP/Hebbian of any kind), and optimize the plastic
+weight vector DIRECTLY against held-out steering r using a strong,
+non-bio, off-the-shelf optimizer -- CMA-ES first choice (real budget, not
+evolution's pop48/gens60), surrogate-gradient descent through the SNN as a
+second option if CMA-ES plateaus early. No lifetime learning, no
+population-based GA noise, no reflex -- purely "does ANY point in this
+weight space produce genuine L-R steering." This isolates SUBSTRATE
+CAPACITY from every learning-algorithm confound in one shot.
+
+**Decision rule:** if the optimizer clears roughly 0.3+ steering r with
+real compute behind it, the substrate is fine and every mechanism tried in
+Tasks 9-19 has just been a weak search method over a space that does
+contain good answers -- worth continuing the mechanism-design track,
+probably leaning toward e-prop or another gradient-flavored approach next
+(see the earlier "biological-like analog" discussion). If it plateaus
+anywhere near the ~0.05-0.15 band every bio-plausible mechanism has been
+stuck in despite unlimited optimization power, the fixed topology itself
+(N=600, K=10 sparse random wiring, or the inherited reflex-intact
+hyperparameters) is the bottleneck, and no plasticity rule -- bio-inspired
+or not -- was ever going to find something that isn't there; next move
+would be re-deriving SYN_GAIN/W_MAX/homeostasis for the no-reflex regime
+specifically, and/or a capacity sweep over N/K under this same ceiling
+test. Not started.
+
+No committed direction beyond Task 20; lower-priority candidates below.
 
 Lower-priority candidates still on the table, roughly in order of how much
 groundwork is already done:
