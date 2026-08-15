@@ -273,7 +273,8 @@ class BatchSim:
             fep_punish=False, fep_punish_t=150, fep_wall_thresh=0.7, fep_timeout_steps=800,
             homeo='mult', homeo_every=20, eh_lr=0.05, eh_bar_decay=0.8,
             cp_steps=10**9, cp_decay_len=1, cp_floor=1.0, fep_punish_gate_steps=0,
-            btsp_decay=0.999, btsp_lr=0.05, rule_a_plus=None, rule_a_minus=None):
+            btsp_decay=0.999, btsp_lr=0.05, rule_a_plus=None, rule_a_minus=None,
+            clamp_LR=None, freeze_motion=False):
         """weight_plastic: (B, n_plastic) tensor, evolves in place and is
         returned updated. reflex_scale: python float, applied uniformly this
         lifetime (curriculum). Returns dict with food_eaten (B,) and, if
@@ -363,7 +364,20 @@ class BatchSim:
         wandering-into-food early, tapering off so later steps reflect the
         network's own (increasingly learned) choices. init_food, if given, is
         used as the T=0 food layout instead of a fresh random one (for
-        chaining a second run() call from where the first left off)."""
+        chaining a second run() call from where the first left off).
+
+        clamp_LR: "bench test" / open-loop diode probe. If given, a tuple
+        (L_fixed, R_fixed) of (B,) tensors -- the smell L/R sensor injection
+        is forced to these fixed values every step instead of being computed
+        from food geometry, decoupling the network's sensor->motor response
+        from any embodied confound (movement, food layout, wall reflex).
+        Pair with freeze_motion=True (body position frozen, no movement
+        update at all -- wall/food_close/nearest all stay constant too) and
+        stdp_on=False (testing the CURRENT wiring's response, not letting it
+        keep learning during the probe) for a clean causal test: does mL-mR
+        track L_fixed-R_fixed the way a diode's output tracks its input,
+        with nothing else in the loop able to explain the result. Default
+        None leaves every prior result unchanged (verified no-op)."""
         dev, dt = self.device, self.dtype
         B = weight_plastic.shape[0]
         N = self.N
@@ -474,6 +488,8 @@ class BatchSim:
                 eye_sig = torch.clamp(eye_sig + (torch.rand(B, N_EYE, device=dev, dtype=dt) - 0.5) * 0.04, 0.0, 1.0)
             L = torch.clamp(L + (torch.rand(B, device=dev, dtype=dt) - 0.5) * 0.04, 0.0, 1.0)
             R = torch.clamp(R + (torch.rand(B, device=dev, dtype=dt) - 0.5) * 0.04, 0.0, 1.0)
+            if clamp_LR is not None:
+                L, R = clamp_LR[0], clamp_LR[1]
             wall = torch.clamp(1.0 - torch.minimum(torch.minimum(cx, cy),
                                torch.minimum(1.0 - cx, 1.0 - cy)) / 0.15, min=0.0)
             food_close = 1.0 / (1.0 + (nearest / 0.3) ** 2)
@@ -713,6 +729,8 @@ class BatchSim:
             new_head = head + head_vel
             new_cx = torch.clamp(cx + torch.cos(new_head) * speed, 0.03, 0.97)
             new_cy = torch.clamp(cy + torch.sin(new_head) * speed, 0.03, 0.97)
+            if freeze_motion:
+                new_head, new_cx, new_cy = head, cx, cy
 
             av_f = alive.to(dt)
             head = torch.where(alive, new_head, head)
@@ -933,6 +951,57 @@ def hunt_score_v2(nearest, hits, wall, W=200, wall_thresh=0.15, seed=0):
             continue
         out[b] = float(np.mean(pre) - np.mean(null))
     return out
+
+
+# Diode bench test (Task 17): the standard diagnostic going forward, per
+# Dave's "microcontroller + testable diodes" framing. Every prior behavioral
+# metric (approach_frac, long_range_correlation, hunt_score, hunt_score_v2)
+# observed the network embedded in the full closed loop and tried to infer
+# causation from correlation -- every one either measured a tautology or
+# failed a null control (Task 16). This instead clamps the smell L/R sensor
+# injection to a fixed value, freezes the body (no movement, so food/wall/
+# hunger can't drift either), turns learning off, and reads steady-state
+# mL-mR -- a direct, isolated, causal read of "does this wiring turn toward
+# a controlled input the way a diode's output tracks its input," with
+# nothing else in the loop able to explain the result. Decomposes the
+# response into BIAS (turn tendency at symmetric input, a=0 -- a built-in
+# spin/circle tendency unrelated to sensing) and SLOPE (how much the turn
+# actually changes per unit of sensor asymmetry -- the thing genuine
+# steering requires). First use (Task 17) found candidate #4's expressed
+# weights carry a large, nearly input-independent BIAS (~0.05-0.12) and
+# only a small SLOPE -- explaining its high food count (a fixed spiral
+# sweeps more arena) and near-zero steering-r (a constant bias doesn't
+# track live sensor asymmetry) at once.
+ASYM_SWEEP_DEFAULT = (-1.0, -0.5, 0.0, 0.5, 1.0)
+
+
+def bench_diode(sim, wp, bench_kwargs, asym_sweep=ASYM_SWEEP_DEFAULT, T=800, settle=200,
+                 n_trials=3, seed0=1000):
+    """wp: (1, n_plastic) weight snapshot to test (RAW genome or EXPRESSED
+    post-lifetime weights). bench_kwargs: dict of run() kwargs identifying
+    the learning mode (e.g. dict(learning='fep', fep_punish=False), or
+    dict(learning='evolverule', rule_a_plus=..., rule_a_minus=...)) --
+    stdp_on is always False here regardless, since this tests the CURRENT
+    wiring's response, not further learning. Returns dict(asym, response,
+    bias, slope, corr) -- bias/slope are the intercept/slope of a linear
+    fit of response vs asym; corr is the Pearson r of that fit."""
+    responses = []
+    for a in asym_sweep:
+        L = torch.full((1,), (1 + a) / 2, dtype=sim.dtype, device=sim.device)
+        R = torch.full((1,), (1 - a) / 2, dtype=sim.dtype, device=sim.device)
+        trial_resp = []
+        for trial in range(n_trials):
+            torch.manual_seed(seed0 + trial)
+            out = sim.run(wp.clone(), T, reflex_scale=0.0, stdp_on=False, record_steering=True,
+                          clamp_LR=(L, R), freeze_motion=True, **bench_kwargs)
+            trial_resp.append(out['dM'][-settle:, 0].mean().item())
+        responses.append(float(np.mean(trial_resp)))
+    asym = np.array(asym_sweep)
+    resp = np.array(responses)
+    slope, bias = np.polyfit(asym, resp, 1)
+    corr = float(np.corrcoef(asym, resp)[0, 1]) if resp.std() > 1e-9 else 0.0
+    return dict(asym=asym.tolist(), response=resp.tolist(), bias=float(bias),
+                slope=float(slope), corr=corr)
 
 
 def oracle(T, seed, speed=0.0009):
