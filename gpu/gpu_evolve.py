@@ -85,9 +85,10 @@ TARGET_G = 1.4
 # creature_embodied.build_creature_network, then uploaded to the device).
 # --------------------------------------------------------------------------- #
 def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bias=0.0,
-                          spatial_lr=False):
+                          spatial_lr=False, bilateral_symmetric=False):
     rng = np.random.default_rng(seed)
     px = np.empty(N); py = np.empty(N); pz = np.empty(N)
+
     filled = 0
     while filled < N:
         cand = rng.random((N, 3)) * 2 - 1
@@ -98,6 +99,17 @@ def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bi
         py[filled:filled + n] = take[:n, 1]
         pz[filled:filled + n] = take[:n, 2]
         filled += n
+
+    if bilateral_symmetric:
+        sL0, sL1 = POOLS['sL']; sR0, sR1 = POOLS['sR']
+        mL0, mL1 = POOLS['mL']; mR0, mR1 = POOLS['mR']
+        px[sL0:sL1] = -np.abs(px[sL0:sL1])
+        px[sR0:sR1] = np.abs(px[sL0:sL1])
+        py[sR0:sR1] = py[sL0:sL1]; pz[sR0:sR1] = pz[sL0:sL1]
+
+        px[mL0:mL1] = -np.abs(px[mL0:mL1])
+        px[mR0:mR1] = np.abs(px[mL0:mL1])
+        py[mR0:mR1] = py[mL0:mL1]; pz[mR0:mR1] = pz[mL0:mL1]
 
     # Task 17, item 1 (Dave, per bl1's topology.py): give the sL/sR/mL/mR
     # pools REAL, anatomically consistent coordinates instead of the fully
@@ -118,8 +130,13 @@ def build_scaffold_numpy(N, K, fi=0.2, seed=42, dense_k=0, contra_k=0, contra_bi
         px[mR0:mR1] = np.abs(px[mR0:mR1])
 
     types = np.where(rng.random(N) < fi, -1, 1).astype(np.int8)
+    if bilateral_symmetric and N >= 2 * (N // 2):
+        half = N // 2
+        types[half:2*half] = types[:half]
+
     for (lo, hi) in POOLS.values():
-        types[lo:hi] = 1
+        if hi <= N:
+            types[lo:hi] = 1
 
     a = np.zeros(N); b = np.zeros(N); c = np.zeros(N); d = np.zeros(N)
     for i in range(N):
@@ -412,7 +429,8 @@ class BatchSim:
             clamp_LR=None, freeze_motion=False, place_code=False,
             struct_plasticity=False, struct_every=200, struct_growth_rate=0.02,
             struct_prune_rate=0.05, struct_activity_thresh=0.02,
-            struct_prune_thresh_frac=0.15, struct_initial_alive_frac=0.2):
+            struct_prune_thresh_frac=0.15, struct_initial_alive_frac=0.2,
+            cpg=False, cerebellum=False, multichannel_neuromod=False):
         """weight_plastic: (B, n_plastic) tensor, evolves in place and is
         returned updated. reflex_scale: python float, applied uniformly this
         lifetime (curriculum). Returns dict with food_eaten (B,) and, if
@@ -625,6 +643,23 @@ class BatchSim:
         tiredness = torch.zeros(B, device=dev, dtype=dt)
         dopamine = torch.zeros(B, device=dev, dtype=dt)
         alive = torch.ones(B, device=dev, dtype=torch.bool)
+
+        if cerebellum:
+            W1_cer = torch.randn(B, 8, 6, device=dev, dtype=dt) * 0.1
+            b1_cer = torch.zeros(B, 8, device=dev, dtype=dt)
+            W2_cer = torch.randn(B, 4, 8, device=dev, dtype=dt) * 0.1
+            b2_cer = torch.zeros(B, 4, device=dev, dtype=dt)
+            prev_s_pred = None
+            prev_s_vec = None
+            prev_h_cer = None
+            pe_mag = torch.zeros(B, device=dev, dtype=dt)
+        else:
+            pe_mag = torch.zeros(B, device=dev, dtype=dt)
+
+        if multichannel_neuromod:
+            norepinephrine = torch.zeros(B, device=dev, dtype=dt)
+            serotonin = torch.ones(B, device=dev, dtype=dt)
+            acetylcholine = torch.zeros(B, device=dev, dtype=dt)
         score = torch.zeros(B, device=dev, dtype=dt)
         survival_steps = torch.zeros(B, device=dev, dtype=dt)
 
@@ -692,24 +727,53 @@ class BatchSim:
                 if use_eye:
                     eye_inj = eye_sig
 
+            if cerebellum:
+                s_actual = torch.stack([L_inj, R_inj, wall, food_close], dim=1)
+                if prev_s_pred is not None:
+                    e_cer = s_actual - prev_s_pred
+                    pe_mag = torch.norm(e_cer, dim=1)
+                    dW2 = torch.bmm(e_cer.unsqueeze(2), prev_h_cer.unsqueeze(1))
+                    dh = torch.bmm(W2_cer.transpose(1, 2), e_cer.unsqueeze(2)).squeeze(2) * (1.0 - prev_h_cer ** 2)
+                    dW1 = torch.bmm(dh.unsqueeze(2), prev_s_vec.unsqueeze(1))
+                    W2_cer = W2_cer + 0.01 * dW2
+                    b2_cer = b2_cer + 0.01 * e_cer
+                    W1_cer = W1_cer + 0.01 * dW1
+                    b1_cer = b1_cer + 0.01 * dh
+
+            if multichannel_neuromod:
+                serotonin = energy_val / 100.0
+                norepinephrine = 0.95 * norepinephrine + 0.05 * pe_mag
+                acetylcholine = torch.maximum(torch.maximum(L_inj, R_inj), food_close)
+                cur_sensor_factor = self.sensor_factor * (0.7 + 0.6 * acetylcholine.unsqueeze(1))
+                cur_noise_scale = self.noise_scale * (1.0 + 0.5 * norepinephrine.unsqueeze(1))
+            else:
+                cur_sensor_factor = self.sensor_factor
+                cur_noise_scale = self.noise_scale
+
             sensor_inj = torch.zeros(B, N, device=dev, dtype=dt)
             av = alive.to(dt).unsqueeze(1)
             if place_code:
-                sensor_inj[:, 0:20] = self._place_encode(L_inj) * self.sensor_factor * av
-                sensor_inj[:, 20:40] = self._place_encode(R_inj) * self.sensor_factor * av
-                sensor_inj[:, 40:60] = self._place_encode(wall) * self.sensor_factor * av
-                sensor_inj[:, 60:80] = self._place_encode(food_close) * self.sensor_factor * av
-                sensor_inj[:, 80:100] = self._place_encode(hunger) * self.sensor_factor * av
-                sensor_inj[:, 100:120] = self._place_encode(tired) * self.sensor_factor * av
+                sensor_inj[:, 0:20] = self._place_encode(L_inj) * cur_sensor_factor * av
+                sensor_inj[:, 20:40] = self._place_encode(R_inj) * cur_sensor_factor * av
+                sensor_inj[:, 40:60] = self._place_encode(wall) * cur_sensor_factor * av
+                sensor_inj[:, 60:80] = self._place_encode(food_close) * cur_sensor_factor * av
+                sensor_inj[:, 80:100] = self._place_encode(hunger) * cur_sensor_factor * av
+                sensor_inj[:, 100:120] = self._place_encode(tired) * cur_sensor_factor * av
             else:
-                sensor_inj[:, 0:20] = (L_inj * self.sensor_factor).unsqueeze(1) * av
-                sensor_inj[:, 20:40] = (R_inj * self.sensor_factor).unsqueeze(1) * av
-                sensor_inj[:, 40:60] = (wall * self.sensor_factor).unsqueeze(1) * av
-                sensor_inj[:, 60:80] = (food_close * self.sensor_factor).unsqueeze(1) * av
-                sensor_inj[:, 80:100] = (hunger * self.sensor_factor).unsqueeze(1) * av
-                sensor_inj[:, 100:120] = (tired * self.sensor_factor).unsqueeze(1) * av
+                sensor_inj[:, 0:20] = (L_inj.unsqueeze(1) * cur_sensor_factor) * av
+                sensor_inj[:, 20:40] = (R_inj.unsqueeze(1) * cur_sensor_factor) * av
+                sensor_inj[:, 40:60] = (wall.unsqueeze(1) * cur_sensor_factor) * av
+                sensor_inj[:, 60:80] = (food_close.unsqueeze(1) * cur_sensor_factor) * av
+                sensor_inj[:, 80:100] = (hunger.unsqueeze(1) * cur_sensor_factor) * av
+                sensor_inj[:, 100:120] = (tired.unsqueeze(1) * cur_sensor_factor) * av
             if use_eye:
                 sensor_inj[:, self.eye_lo:self.eye_hi] = eye_inj * self.sensor_factor * av
+            if cpg:
+                cpg_phase = 2.0 * math.pi * (t % 40) / 40.0
+                cpg_l = 12.0 * (1.0 + math.sin(cpg_phase))
+                cpg_r = 12.0 * (1.0 + math.sin(cpg_phase + math.pi))
+                sensor_inj[:, self.mL0:self.mL1] += cpg_l * av
+                sensor_inj[:, self.mR0:self.mR1] += cpg_r * av
 
             dopamine = dopamine * 0.985
             trace_pre = trace_pre * TRACE_DECAY
@@ -939,7 +1003,18 @@ class BatchSim:
             speed = torch.clamp(0.0009 + MOTOR_SPEED_SCALE * fwd * MOTOR_GAIN, min=0.0)
             to_center = torch.atan2(0.5 - cy, 0.5 - cx)
             dh_wall = torch.atan2(torch.sin(to_center - head), torch.cos(to_center - head))
-            turn = (mL - mR) * 0.9 * MOTOR_GAIN + dh_wall * wall * 0.3
+            mL_mean = smoothed[:, self.mL0:self.mL1].mean(dim=1)
+            mR_mean = smoothed[:, self.mR0:self.mR1].mean(dim=1)
+
+            if cerebellum:
+                s_vec = torch.stack([L_inj, R_inj, wall, food_close, mL_mean, mR_mean], dim=1)
+                h_cer = torch.tanh(torch.bmm(W1_cer, s_vec.unsqueeze(2)).squeeze(2) + b1_cer)
+                prev_s_pred = torch.bmm(W2_cer, h_cer.unsqueeze(2)).squeeze(2) + b2_cer
+                prev_s_vec = s_vec
+                prev_h_cer = h_cer
+
+            turn_gain = 0.9 * (1.1 - 0.2 * serotonin) if multichannel_neuromod else 0.9
+            turn = (mL - mR) * turn_gain * MOTOR_GAIN + dh_wall * wall * 0.3
             head_vel = head_vel * 0.75 + turn * 0.25
             new_head = head + head_vel
             new_cx = torch.clamp(cx + torch.cos(new_head) * speed, 0.03, 0.97)
@@ -1385,6 +1460,11 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
     cp_kw = dict(cp_steps=args.cp_steps, cp_decay_len=args.cp_decay_len, cp_floor=args.cp_floor)
     btsp_kw = dict(btsp_decay=args.btsp_decay, btsp_lr=args.btsp_lr)
     place_code = getattr(args, 'place_code', False)
+    flocke_kw = dict(
+        cpg=getattr(args, 'cpg', False),
+        cerebellum=getattr(args, 'cerebellum', False),
+        multichannel_neuromod=getattr(args, 'multichannel_neuromod', False),
+    )
     struct_kw = dict(
         struct_plasticity=getattr(args, 'struct_plasticity', False),
         struct_every=getattr(args, 'struct_every', 200),
@@ -1405,13 +1485,13 @@ def run_lifetime(sim, weight_plastic, args, reflex_scale, T, record_steering=Fal
                            motor_noise_end=args.boot_noise_end,
                            use_eye=args.use_eye, place_code=place_code,
                            **fep_kw, **homeo_kw, **eh_kw,
-                           **cp_kw, **btsp_kw, **rule_kw, **struct_kw)
+                           **cp_kw, **btsp_kw, **rule_kw, **struct_kw, **flocke_kw)
         wp = boot_out['weight_plastic']
     return sim.run(wp, T, reflex_scale, stdp_on=True, record_steering=record_steering,
                    learning=args.learning, elig_decay=args.elig_decay,
                    elig_lr=args.elig_lr, value_lr=args.value_lr, use_eye=args.use_eye,
                    place_code=place_code,
-                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw, **rule_kw, **struct_kw)
+                   **fep_kw, **homeo_kw, **eh_kw, **cp_kw, **btsp_kw, **rule_kw, **struct_kw, **flocke_kw)
 
 
 def main():
@@ -1459,6 +1539,14 @@ def main():
                          'value (tiled 0..1 across the pool), smoothly blended at band edges, '
                          'total injected current per pool unchanged. Default False leaves every '
                          'prior result unchanged (verified no-op).')
+    ap.add_argument('--cpg', action='store_true',
+                    help='Innate CPG prior: 2-4 neuron oscillator pool to drive baseline motor rhythms.')
+    ap.add_argument('--cerebellum', action='store_true',
+                    help='Cerebellar predictive forward model: 2-layer predictive filter estimating sensor values 1 step ahead.')
+    ap.add_argument('--multichannel-neuromod', action='store_true',
+                    help='Multi-channel neuromodulation: expand dopamine to include DA, NE, 5-HT, and ACh.')
+    ap.add_argument('--bilateral-symmetric', action='store_true',
+                    help='Bilateral symmetric initialization: enforce sagittal-plane mirrored initialization.')
     ap.add_argument('--struct-plasticity', action='store_true',
                     help="Task 18 item 4 (Dave's fallback list, bl1-inspired) -- activity-dependent "
                          'synapse creation/pruning over the --contra-k candidate pool (requires '
@@ -1587,7 +1675,8 @@ def main():
 
     scaffold = build_scaffold_numpy(args.N, args.K, fi=0.2, seed=args.scaffold_seed, dense_k=args.dense_k,
                                      contra_k=args.contra_k, contra_bias=args.contra_bias,
-                                     spatial_lr=args.spatial_lr)
+                                   spatial_lr=args.spatial_lr,
+                                   bilateral_symmetric=args.bilateral_symmetric)
     n_struct = 0
     if args.struct_plasticity:
         if args.contra_k <= 0 or args.dense_k != 0:
